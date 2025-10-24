@@ -7,6 +7,27 @@ import (
 	"io"
 )
 
+func handleConn(conn net.Conn) {
+	// Continuously read messages from connection and respond "PONG" to each one.
+	defer conn.Close()
+	pong := []byte("+PONG\r\n")
+	buf := make([]byte, 1024)
+	for {
+		_, err := conn.Read(buf)
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			fmt.Println("Error reading response: ", err.Error())
+			return
+		}
+
+		_, err = conn.Write(pong)
+		if err != nil {
+			fmt.Println("Error sending PONG response: ", err.Error())
+			return
+		}
+	}
+}
 
 func main() {
 
@@ -17,30 +38,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Block until another host attempts connection with the listener.
-	conn, err := l.Accept()
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
+	// Listen for and handle concurrent connections.
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Println("Error accepting connection: ", err.Error())
+			os.Exit(1)
+		}
+		go handleConn(conn)
 	}
 
-	// Continuously read messages from connection and respond "PONG" to each one.
-	pong := []byte("+PONG\r\n")
-	buf := make([]byte, 1024)
-	for {
-		_, err = conn.Read(buf)
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			fmt.Println("Error reading response: ", err.Error())
-			os.Exit(1)
-		}
-		
-		_, err = conn.Write(pong)
-		if err != nil {
-			fmt.Println("Error sending PONG response: ", err.Error())
-			os.Exit(1)
-		}
-	}
 	
 }
