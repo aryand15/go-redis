@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"io"
 )
 
 
@@ -25,13 +26,16 @@ func main() {
 
 	// Continuously read messages from connection and respond "PONG" to each one.
 	pong := []byte("+PONG\r\n")
-	buf := make([]byte, 9)
+	buf := make([]byte, 1024)
 	for {
 		_, err = conn.Read(buf)
-		if err != nil {
+		if err == io.EOF {
+			break
+		} else if err != nil {
 			fmt.Println("Error reading response: ", err.Error())
 			os.Exit(1)
 		}
+		
 		_, err = conn.Write(pong)
 		if err != nil {
 			fmt.Println("Error sending PONG response: ", err.Error())
