@@ -23,11 +23,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Attempt to send PONG by default when a connection is received.
+	// Continuously read messages from connection and respond "PONG" to each one.
 	pong := []byte("+PONG\r\n")
-	_, err = conn.Write(pong)
-	if err != nil {
-		fmt.Println("Error sending PONG response: ", err.Error())
-		os.Exit(1)
+	buf := make([]byte, 9)
+	for {
+		_, err = conn.Read(buf)
+		if err != nil {
+			fmt.Println("Error reading response: ", err.Error())
+			os.Exit(1)
+		}
+		_, err = conn.Write(pong)
+		if err != nil {
+			fmt.Println("Error sending PONG response: ", err.Error())
+			os.Exit(1)
+		}
 	}
+	
 }
