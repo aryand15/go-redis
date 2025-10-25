@@ -97,7 +97,8 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 		return respEmptyArr, true
 	}
 	for _, val := range resp.NestedRESPData {
-		fmt.Println(val)
+		decoded, _ := EncodeToRESP(val)
+		fmt.Println(decoded)
 	}
 	start, _ := strconv.Atoi(string(args[2].Data))
 	stop, _ := strconv.Atoi(string(args[3].Data))
