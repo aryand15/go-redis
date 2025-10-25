@@ -69,14 +69,15 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 		return nil, false
 	}
 	key := string(args[1].Data)
-	val, ok := h.db.Get(key)
+	_, ok := h.db.Get(key)
 	if !ok {
 		h.db.Set(key, &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)})
 	}
-
+	
+	val, _ := h.db.Get(key)
 	val.NestedRESPData = append(val.NestedRESPData, args[2])
 	newLen := strconv.Itoa(len(val.NestedRESPData))
-	
+
 	return EncodeToRESP(
 		&RESPData{
 			Type: Integer, 
