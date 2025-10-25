@@ -182,7 +182,7 @@ func (h *CommandHandler) HandleLlen(args []*RESPData) ([]byte, bool) {
 }
 
 func (h *CommandHandler) HandleLpop(args []*RESPData) ([]byte, bool) {
-	if len(args) < 2 {
+	if len(args) != 2 && len(args) != 3 {
 		return nil, false
 	}
 	arrName := string(args[1].Data)
@@ -192,15 +192,23 @@ func (h *CommandHandler) HandleLpop(args []*RESPData) ([]byte, bool) {
 	if !ok || arrResp.Type != Array {
 		return respNull, true
 	}
-	ret := &RESPData{Type: Array, NestedRESPData: make([]*RESPData, min(len(args)-2, len(arrResp.NestedRESPData)))}
-	for i := 2; i < min(len(args), len(arrResp.NestedRESPData)+2); i++ {
-		elem := CloneRESP(arrResp.NestedRESPData[i-2])
-		ret.NestedRESPData = append(ret.NestedRESPData, elem)
+	numToRemove := 1
+	if len(args) == 3 {
+		numToRemove, _ = strconv.Atoi(string(args[2].Data))
+		if numToRemove < 0 {
+			return nil, false
+		}
+		numToRemove = min(numToRemove, len(arrResp.NestedRESPData))
 	}
-	if len(args) < len(arrResp.NestedRESPData) {
+	ret := &RESPData{Type: Array, NestedRESPData: make([]*RESPData, numToRemove)}
+	for i := range numToRemove {
+		elem := CloneRESP(arrResp.NestedRESPData[i])
+		ret.NestedRESPData[i] = elem
+	}
+	if numToRemove == len(arrResp.NestedRESPData) {
 		arrResp.NestedRESPData = make([]*RESPData, 0)
 	} else {
-		arrResp.NestedRESPData = arrResp.NestedRESPData[len(args):]
+		arrResp.NestedRESPData = arrResp.NestedRESPData[numToRemove:]
 	}
 	return EncodeToRESP(ret)
 
