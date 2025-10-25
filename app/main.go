@@ -11,12 +11,12 @@ import (
 
 // DB represents an in-memory key-value store
 type DB struct {
-	data map[string]RESPData
+	data map[string]*RESPData
 	timers map[string]*time.Timer
 	mu   sync.Mutex // Prevents concurrency issues
 }
 
-func (db *DB) Set(key string, val RESPData) {
+func (db *DB) Set(key string, val *RESPData) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
@@ -29,7 +29,7 @@ func (db *DB) Set(key string, val RESPData) {
 
 }
 
-func (db *DB) TimedSet(key string, val RESPData, duration time.Duration) {
+func (db *DB) TimedSet(key string, val *RESPData, duration time.Duration) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
@@ -43,7 +43,7 @@ func (db *DB) TimedSet(key string, val RESPData, duration time.Duration) {
 	
 }
 
-func (db *DB) Get(key string) (RESPData, bool) {
+func (db *DB) Get(key string) (*RESPData, bool) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	val, ok := db.data[key]
@@ -59,7 +59,7 @@ func (db *DB) remove(key string) {
 
 func NewDB() *DB {
 	return &DB{
-		data: make(map[string]RESPData),
+		data: make(map[string]*RESPData),
 		timers: make(map[string]*time.Timer),
 	}
 }

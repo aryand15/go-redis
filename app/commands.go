@@ -22,18 +22,18 @@ func NewCommandHandler(db *DB) *CommandHandler {
 	return &CommandHandler{db: db}
 }
 
-func (h *CommandHandler) HandleEcho(args []RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleEcho(args []*RESPData) ([]byte, bool) {
 	if len(args) < 2 {
 		return nil, false
 	}
-	return EncodeToRESP(RESPData{Type: BulkString, Data: args[1].Data})
+	return EncodeToRESP(&RESPData{Type: BulkString, Data: args[1].Data})
 }
 
 func (h *CommandHandler) HandlePing() ([]byte, bool) {
 	return respPong, true
 }
 
-func (h *CommandHandler) HandleSet(args []RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleSet(args []*RESPData) ([]byte, bool) {
 	if len(args) != 3 && len(args) != 5 {
 		return nil, false
 	}
@@ -52,7 +52,7 @@ func (h *CommandHandler) HandleSet(args []RESPData) ([]byte, bool) {
 	return respOK, true
 }
 
-func (h *CommandHandler) HandleGet(args []RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleGet(args []*RESPData) ([]byte, bool) {
 	if len(args) < 2 {
 		return nil, false
 	}
@@ -62,6 +62,27 @@ func (h *CommandHandler) HandleGet(args []RESPData) ([]byte, bool) {
 		return respNull, true
 	}
 	return EncodeToRESP(val)
+}
+
+func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
+	if len(args) != 3 {
+		return nil, false
+	}
+	key := string(args[1].Data)
+	val, ok := h.db.Get(key)
+	if !ok {
+		h.db.Set(key, &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)})
+	}
+
+	val.NestedRESPData = append(val.NestedRESPData, args[2])
+	newLen := strconv.Itoa(len(val.NestedRESPData))
+	
+	return EncodeToRESP(
+		&RESPData{
+			Type: Integer, 
+			Data: []byte(newLen),
+		})
+
 }
 
 func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
@@ -86,6 +107,8 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return h.HandleSet(request)
 	case "get":
 		return h.HandleGet(request)
+	case "rpush":
+		return h.HandleRPush(request)
 	default:
 		return nil, false
 	}

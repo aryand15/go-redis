@@ -26,23 +26,24 @@ func (t RESPType) Valid() bool {
 type RESPData struct {
 	Type           RESPType
 	Data           []byte
-	NestedRESPData []RESPData
+	NestedRESPData []*RESPData
 }
 
-func (r RESPData) String() string {
+func (r *RESPData) String() string {
 	return string(r.Data)
 }
 
-func DecodeFromRESP(b []byte) (numRead int, resp RESPData, success bool) {
+func DecodeFromRESP(b []byte) (numRead int, resp *RESPData, success bool) {
 	// Error: Byte array is empty
 	if len(b) == 0 {
-		return 0, RESPData{}, false
+		return 0, nil, false
 	}
 
-	// Error: Converting first byte to a valid RESP type fails
+	// Create new RESPData instance
+	resp = &RESPData{}
 	resp.Type = RESPType(b[0])
 	if !resp.Type.Valid() {
-		return 0, RESPData{}, false
+		return 0, nil, false
 	}
 
 	// Navigate to the next /r/n
@@ -50,12 +51,12 @@ func DecodeFromRESP(b []byte) (numRead int, resp RESPData, success bool) {
 	for ; !(b[i] == '\n' && b[i-1] == '\r'); i++ {
 		// Error: Didn't reach an /r/n throughout the entire byte array
 		if i == len(b) {
-			return 0, RESPData{}, false
+			return 0, nil, false
 		}
 
 		// Error: Missing \r before \n
 		if b[i] == '\n' && b[i-1] != '\r' {
-			return 0, RESPData{}, false
+			return 0, nil, false
 		}
 	}
 
@@ -72,7 +73,7 @@ func DecodeFromRESP(b []byte) (numRead int, resp RESPData, success bool) {
 
 	// Error: Unable to parse as integer.
 	if err != nil {
-		return 0, RESPData{}, false
+		return 0, nil, false
 	}
 
 	// Handle Integer type.
@@ -84,7 +85,7 @@ func DecodeFromRESP(b []byte) (numRead int, resp RESPData, success bool) {
 
 	// Error: Type is Array and integer is negative.
 	if length < 0 && resp.Type == Array {
-		return 0, RESPData{}, false
+		return 0, nil, false
 	}
 
 	// Type is Bulk String and integer is negative (null bulk string).
@@ -101,14 +102,14 @@ func DecodeFromRESP(b []byte) (numRead int, resp RESPData, success bool) {
 
 		// Error: Data length is too short
 		if (i + length + 2) > len(b) {
-			return 0, RESPData{}, false
+			return 0, nil, false
 		}
 
 		i += (length + 1)
 
 		// Error: Didn't find an \r\n after reading appropriate amount of data
 		if !(b[i] == '\n' && b[i-1] == '\r') {
-			return 0, RESPData{}, false
+			return 0, nil, false
 		}
 
 		resp.Data = b[j : j+length]
@@ -118,18 +119,18 @@ func DecodeFromRESP(b []byte) (numRead int, resp RESPData, success bool) {
 	// Now for the absolute beast. Handle the Array type.
 	// Array format: *<number-of-elements>\r\n<element-1>...<element-n>
 	// Now "length" represents the number of elements in the array
-	resp.NestedRESPData = make([]RESPData, length)
+	resp.NestedRESPData = make([]*RESPData, length)
 	for idx := 0; idx < length; idx++ {
 		// Errror: Not enough array elements were able to be read.
 		if i == len(b) {
-			return 0, RESPData{}, false
+			return 0, nil, false
 		}
 
 		rread, rresp, rsuccess := DecodeFromRESP(b[i:])
 
 		// Error: One of the array RESP elements was unsuccessfully parsed.
 		if !rsuccess {
-			return 0, RESPData{}, false
+			return 0, nil, false
 		}
 
 		// Add RESPData to list of array elements
@@ -142,7 +143,7 @@ func DecodeFromRESP(b []byte) (numRead int, resp RESPData, success bool) {
 
 }
 
-func EncodeToRESP(r RESPData) (b []byte, success bool) {
+func EncodeToRESP(r *RESPData) (b []byte, success bool) {
 	// This is assuming that the RESPData passes all validation.
 
 	switch r.Type {
