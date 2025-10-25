@@ -33,6 +33,20 @@ func (r *RESPData) String() string {
 	return string(r.Data)
 }
 
+func CloneRESP(in *RESPData) *RESPData {
+    out := &RESPData{ Type: in.Type }
+    if in.Data != nil {
+        out.Data = append([]byte(nil), in.Data...)
+    }
+    if len(in.NestedRESPData) > 0 {
+        out.NestedRESPData = make([]*RESPData, len(in.NestedRESPData))
+        for i, child := range in.NestedRESPData {
+            out.NestedRESPData[i] = CloneRESP(child)
+        }
+    }
+    return out
+}
+
 func DecodeFromRESP(b []byte) (numRead int, resp *RESPData, success bool) {
 	// Error: Byte array is empty
 	if len(b) == 0 {

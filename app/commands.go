@@ -83,7 +83,7 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 	}
 
 	for i := 2; i < len(args); i++ {
-		val.NestedRESPData = append(val.NestedRESPData, args[i])
+		val.NestedRESPData = append(val.NestedRESPData, CloneRESP(args[i]))
 	}
 
 	testNestedData, _ := h.db.Get(key)
