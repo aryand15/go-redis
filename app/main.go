@@ -11,7 +11,7 @@ import (
 
 type DB struct {
 	data map[string]RESPData
-	mu sync.Mutex
+	mu sync.Mutex	// Prevents concurrency issues
 }
 
 func (db *DB) Set(key string, val RESPData) {
@@ -33,70 +33,6 @@ func NewDB() *DB {
 
 var globalDB *DB = NewDB()
 
-func handleConn(conn net.Conn) {
-	// Continuously read messages from connection.
-
-	defer conn.Close()
-	buf := make([]byte, 1024) // Buffer to hold incoming commands
-
-	for {
-		// Read the raw RESP message
-		n, err := conn.Read(buf)
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			fmt.Println("Error reading response: ", err.Error())
-			return
-		}
-		encodedMessage := buf[:n]
-
-		// Parse RESP and convert into readable commands
-		_, respData, success := DecodeFromRESP(encodedMessage)
-		if !success || respData.Type != Array {
-			fmt.Println("Unable to parse RESP request")
-			continue
-		}
-
-		// Extract the first word to get the command
-		request := respData.NestedRESPData
-		command := string(request[0].Data)
-		var output []byte
-
-		// Handle the different commands
-		switch strings.ToLower(command) {
-		case "echo":
-			output, success = EncodeToRESP(RESPData{Type:BulkString, Data:respData.NestedRESPData[1].Data})
-			if (!success) {
-				fmt.Println("Error encoding to RESP.")
-				return
-			}
-		case "ping":
-			output = []byte("+PONG\r\n")
-		case "set":
-			key := string(request[1].Data)
-			val := request[2]
-			globalDB.Set(key, val)
-		case "get":
-			key := string(request[1].Data)
-			val, ok := globalDB.Get(key)
-			if !ok {
-				output = []byte("$-1\r\n")
-			} else {
-				output, _ = EncodeToRESP(val)
-			}
-
-		default:
-			output = []byte("I have never seen this command before.")
-
-		}
-		_, err = conn.Write(output)
-		if err != nil {
-			fmt.Println("Error sending response: ", err.Error())
-			return
-		}
-		
-	}
-}
 
 func main() {
 
@@ -117,4 +53,86 @@ func main() {
 		go handleConn(conn)
 	}
 
+}
+
+func handleConn(conn net.Conn) {
+	// Continuously read messages from connection.
+
+	defer conn.Close()
+	buf := make([]byte, 1024) // Buffer to hold incoming commands
+
+	for {
+		// Read the raw RESP message from client
+		n, err := conn.Read(buf)
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			fmt.Println("Error reading response: ", err.Error())
+			return
+		}
+		encodedMessage := buf[:n]
+		
+		// Call helper to return output given message
+		output, ok := handleMessage(encodedMessage)
+		if !ok {
+			fmt.Println("Something went wrong.")
+			return
+		}
+
+		// Send output to client through TCP connection
+		_, err = conn.Write(output)
+		if err != nil {
+			fmt.Println("Error sending response: ", err.Error())
+			return
+		}
+		
+	}
+}
+
+func handleMessage(message []byte) (response []byte, ok bool) {
+	// Parse RESP and convert into a readable list of individual words
+	_, respData, success := DecodeFromRESP(message)
+	if !success || respData.Type != Array {
+		fmt.Println("Unable to parse RESP request")
+		return nil, false
+	}
+
+	// Extract the first word to get the command
+	request := respData.NestedRESPData
+	command := string(request[0].Data)
+
+	// Handle the different commands
+	switch strings.ToLower(command) {
+	case "echo":
+		response, success = EncodeToRESP(RESPData{Type:BulkString, Data:respData.NestedRESPData[1].Data})
+		if (!success) {
+			fmt.Println("Error encoding to RESP.")
+			return
+		}
+	case "ping":
+		response = []byte("+PONG\r\n")
+	case "set":
+		key := string(request[1].Data)
+		val := request[2]
+		globalDB.Set(key, val)
+		response = []byte("+OK\r\n")
+	case "get":
+		key := string(request[1].Data)
+		val, ok := globalDB.Get(key)
+		if !ok {
+			response = []byte("$-1\r\n")
+		} else {
+			response, ok = EncodeToRESP(val)
+			if !ok {
+				fmt.Println("Unable to encode value to RESP")
+				return nil, false
+			}
+
+		}
+	default:
+		return nil, false
+
+	}
+
+	return response, true
 }
