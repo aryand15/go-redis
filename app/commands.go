@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"strings"
+	"strconv"
+	"time"
 )
 
 // Common RESP responses
@@ -31,11 +34,21 @@ func (h *CommandHandler) HandlePing() ([]byte, bool) {
 }
 
 func (h *CommandHandler) HandleSet(args []RESPData) ([]byte, bool) {
-	if len(args) < 3 {
+	if len(args) != 3 && len(args) != 5 {
 		return nil, false
 	}
 	key := string(args[1].Data)
-	h.db.Set(key, args[2])
+	if len(args) == 3 {
+		h.db.Set(key, args[2])
+	} else if timeOption := string(args[3].Data); (timeOption != "PX" && timeOption != "EX") {
+		return nil, false
+	} else if duration, err := strconv.Atoi(string(args[4].Data)); (err != nil || duration < 0) {
+		return nil, false
+	} else if timeOption == "EX" {
+		h.db.TimedSet(key, args[2], time.Duration(duration) * time.Second)
+	} else if timeOption == "PX" {
+		h.db.TimedSet(key, args[2], time.Duration(duration) * time.Millisecond)
+	}
 	return respOK, true
 }
 
@@ -64,14 +77,14 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 	}
 
 	command := string(request[0].Data)
-	switch command {
-	case "echo", "ECHO":
+	switch strings.ToLower(command) {
+	case "echo":
 		return h.HandleEcho(request)
-	case "ping", "PING":
+	case "ping":
 		return h.HandlePing()
-	case "set", "SET":
+	case "set":
 		return h.HandleSet(request)
-	case "get", "GET":
+	case "get":
 		return h.HandleGet(request)
 	default:
 		return nil, false
