@@ -76,20 +76,17 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 	key := string(args[1].Data)
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
-	_, ok := h.db.Get(key)
+	val, ok := h.db.Get(key)
 	if !ok {
-		h.db.Set(key, &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)})
+		val := &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)}
+		h.db.Set(key, val)
 	}
 
-	val, _ := h.db.Get(key)
 	for i := 2; i < len(args); i++ {
 		val.NestedRESPData = append(val.NestedRESPData, args[i])
 	}
+	h.db.Set(key, val)
 	newLen := strconv.Itoa(len(val.NestedRESPData))
-	val, _ = h.db.Get(key)
-	for _, v := range val.NestedRESPData {
-		fmt.Println(string(v.Data))
-	}
 
 	return EncodeToRESP(
 		&RESPData{
@@ -116,14 +113,6 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 	stop = min(stop, arrLen-1)
 	if start >= arrLen || start < 0 || stop < start || arrLen == 0 {
 		return respEmptyArr, true
-	}
-
-	for _, val := range resp.NestedRESPData {
-		fmt.Println("Total array:", string(val.Data))
-	}
-
-	for _, val := range resp.NestedRESPData[start:stop+1] {
-		fmt.Println("sliced array:", string(val.Data))
 	}
 
 	return EncodeToRESP(

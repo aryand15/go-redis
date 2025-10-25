@@ -41,6 +41,8 @@ func DecodeFromRESP(b []byte) (numRead int, resp *RESPData, success bool) {
 
 	// Create new RESPData instance
 	resp = &RESPData{}
+
+	// Check if RESP type is valid
 	resp.Type = RESPType(b[0])
 	if !resp.Type.Valid() {
 		return 0, nil, false
