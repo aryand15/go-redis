@@ -87,7 +87,9 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 	}
 	newLen := strconv.Itoa(len(val.NestedRESPData))
 	val, _ = h.db.Get(key)
-	fmt.Println("Confirm length got updated:", len(val.NestedRESPData))
+	for _, v := range val.NestedRESPData {
+		fmt.Println(string(v.Data))
+	}
 
 	return EncodeToRESP(
 		&RESPData{
