@@ -157,7 +157,7 @@ func EncodeToRESP(r RESPData) (b []byte, success bool) {
 		return []byte(s), true
 	case BulkString:
 		strlen := len(r.Data)
-		s := "$" + string(strlen) + "\r\n" + string(r.Data) + "\r\n"
+		s := "$" + strconv.Itoa(strlen) + "\r\n" + string(r.Data) + "\r\n"
 		return []byte(s), true
 	case Array:
 		arrlen := len(r.NestedRESPData)
