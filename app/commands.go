@@ -86,11 +86,6 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 		val.NestedRESPData = append(val.NestedRESPData, CloneRESP(args[i]))
 	}
 
-	testNestedData, _ := h.db.Get(key)
-	for _, v := range testNestedData.NestedRESPData {
-		fmt.Println("Rpush data"+string(v.Data))
-	}
-
 	newLen := strconv.Itoa(len(val.NestedRESPData))
 
 	return EncodeToRESP(
@@ -100,6 +95,39 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 		})
 
 }
+
+func (h *CommandHandler) HandleLPush(args []*RESPData) ([]byte, bool) {
+	if len(args) < 3 {
+		return nil, false
+	}
+	key := string(args[1].Data)
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+	val, ok := h.db.Get(key)
+	if !ok {
+		val = &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)}
+		h.db.Set(key, val)
+	}
+
+	newArr := make([]*RESPData, len(val.NestedRESPData) + len(args)-2)
+	for i := 0; i < len(args)-2; i++ {
+		newArr[i] = CloneRESP(args[len(args)-1-i])
+	}
+	for i := len(args)-2; i < len(newArr); i++ {
+		newArr[i] = CloneRESP(val.NestedRESPData[i-len(args)+2])
+	}
+	val.NestedRESPData = newArr
+	newLen := strconv.Itoa(len(val.NestedRESPData))
+
+	return EncodeToRESP(
+		&RESPData{
+			Type: Integer, 
+			Data: []byte(newLen),
+		})
+
+}
+
+
 
 func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 	if len(args) != 4 {
@@ -160,6 +188,8 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return h.HandleGet(request)
 	case "rpush":
 		return h.HandleRPush(request)
+	case "lpush":
+		return h.HandleLPush(request)
 	case "lrange":
 		return h.HandleLRange(request)
 	default:
