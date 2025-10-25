@@ -75,9 +75,9 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 	}
 
 	val, _ := h.db.Get(key)
-	for i := 2; i < len(args); i++ {
-		val.NestedRESPData = append(val.NestedRESPData, args[i])
-	}
+	h.db.mu.Lock()
+	val.NestedRESPData = append(val.NestedRESPData, args[2:]...)
+	h.db.mu.Unlock()
 	newLen := strconv.Itoa(len(val.NestedRESPData))
 
 	return EncodeToRESP(
