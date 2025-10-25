@@ -17,9 +17,6 @@ type DB struct {
 }
 
 func (db *DB) Set(key string, val *RESPData) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
 	// If a timer already exists, remove it
 	if timer, ok := db.timers[key]; ok {
 		timer.Stop()
@@ -30,9 +27,6 @@ func (db *DB) Set(key string, val *RESPData) {
 }
 
 func (db *DB) TimedSet(key string, val *RESPData, duration time.Duration) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
 	// If a timer already exists, stop it so that key doesn't get deleted twice
 	if timer, ok := db.timers[key]; ok{
 		timer.Stop()
@@ -44,8 +38,6 @@ func (db *DB) TimedSet(key string, val *RESPData, duration time.Duration) {
 }
 
 func (db *DB) Get(key string) (*RESPData, bool) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
 	val, ok := db.data[key]
 	return val, ok
 }

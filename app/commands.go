@@ -39,6 +39,8 @@ func (h *CommandHandler) HandleSet(args []*RESPData) ([]byte, bool) {
 		return nil, false
 	}
 	key := string(args[1].Data)
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
 	if len(args) == 3 {
 		h.db.Set(key, args[2])
 	} else if timeOption := string(args[3].Data); (timeOption != "PX" && timeOption != "EX") {
@@ -58,6 +60,8 @@ func (h *CommandHandler) HandleGet(args []*RESPData) ([]byte, bool) {
 		return nil, false
 	}
 	key := string(args[1].Data)
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
 	val, ok := h.db.Get(key)
 	if !ok {
 		return respNull, true
@@ -70,6 +74,8 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 		return nil, false
 	}
 	key := string(args[1].Data)
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
 	_, ok := h.db.Get(key)
 	if !ok {
 		h.db.Set(key, &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)})
@@ -93,7 +99,8 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 	if len(args) != 4 {
 		return nil, false
 	}
-
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
 	resp, ok := h.db.Get(string(args[1].Data))
 	if !ok {
 		return respEmptyArr, true
