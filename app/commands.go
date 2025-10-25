@@ -96,8 +96,8 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 	if !ok {
 		return respEmptyArr, true
 	}
-	for thing := range resp.NestedRESPData {
-		fmt.Println(thing)
+	for _, val := range resp.NestedRESPData {
+		fmt.Println(val)
 	}
 	start, _ := strconv.Atoi(string(args[2].Data))
 	stop, _ := strconv.Atoi(string(args[3].Data))
