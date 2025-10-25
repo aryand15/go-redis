@@ -76,9 +76,6 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 	}
 
 	val, _ := h.db.Get(key)
-
-	h.db.mu.Lock()
-	defer h.db.mu.Unlock()
 	val.NestedRESPData = append(val.NestedRESPData, args[2:]...)
 	newLen := strconv.Itoa(len(val.NestedRESPData))
 
@@ -99,9 +96,6 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 	if !ok {
 		return respEmptyArr, true
 	}
-
-	h.db.mu.Lock()
-	defer h.db.mu.Unlock()
 	start, _ := strconv.Atoi(string(args[2].Data))
 	fmt.Println(start)
 	stop, _ := strconv.Atoi(string(args[3].Data))
