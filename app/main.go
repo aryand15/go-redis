@@ -42,7 +42,7 @@ func handleConn(conn net.Conn) {
 				fmt.Println("Error encoding to RESP.")
 				return
 			}
-		case "pong":
+		case "ping":
 			output = []byte("+PONG\r\n")
 		default:
 			output = []byte("I have never seen this command before.")
