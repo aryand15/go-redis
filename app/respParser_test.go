@@ -55,7 +55,7 @@ func TestDecodeFromArray(t *testing.T) {
 }
 
 func TestDecodeFromComplexArray(t *testing.T) {
-	input := []byte("*3\r\n$3\r\nSET\r\n$4\r\npear\r\n$10\r\nstrawberry\r\n")
+	input := []byte("*7\r\n$5\r\nRPUSH\r\n$5\r\ngrape\r\n$6\r\norange\r\n$4\r\npear\r\n$10\r\nstrawberry\r\n$6\r\nbanana\r\n$9\r\npineapple\r\n")
 	numRead, resp, success := DecodeFromRESP(input)
 
 	if !success {
@@ -70,11 +70,11 @@ func TestDecodeFromComplexArray(t *testing.T) {
 		t.Errorf("Expected RESP type to be Array, got %v", resp.Type)
 	}
 
-	if len(resp.NestedRESPData) != 3 {
+	if len(resp.NestedRESPData) != 7 {
 		t.Errorf("Expected 3 nested RESP data elements, got %d", len(resp.NestedRESPData))
 	}
 
-	expectedValues := []string{"SET", "pear", "strawberry"}
+	expectedValues := []string{"RPUSH", "grape", "orange", "pear", "strawberry", "banana", "pineapple"}
 	for i, expected := range expectedValues {
 		if resp.NestedRESPData[i].Type != BulkString || resp.NestedRESPData[i].String() != expected {
 			t.Errorf("Expected element %d to be BulkString '%s', got type %v and data '%s'", i, expected, resp.NestedRESPData[i].Type, resp.NestedRESPData[i].String())
