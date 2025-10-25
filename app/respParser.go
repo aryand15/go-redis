@@ -48,12 +48,12 @@ func DecodeFromRESP(b []byte) (numRead int, resp RESPData, success bool) {
 	// Navigate to the next /r/n
 	i := 1
 	for ; !(b[i] == '\n' && b[i-1] == '\r'); i++ {
-		// Didn't reach an /r/n throughout the entire byte array
+		// Error: Didn't reach an /r/n throughout the entire byte array
 		if i == len(b) {
 			return 0, RESPData{}, false
 		}
 
-		// Missing \r before \n
+		// Error: Missing \r before \n
 		if b[i] == '\n' && b[i-1] != '\r' {
 			return 0, RESPData{}, false
 		}
@@ -70,7 +70,7 @@ func DecodeFromRESP(b []byte) (numRead int, resp RESPData, success bool) {
 	// Attempt to convert captured data to integer.
 	length, err := strconv.Atoi(string(b[1 : i-1]))
 
-	// Unable to parse as integer.
+	// Error: Unable to parse as integer.
 	if err != nil {
 		return 0, RESPData{}, false
 	}
@@ -82,7 +82,7 @@ func DecodeFromRESP(b []byte) (numRead int, resp RESPData, success bool) {
 		return i + 1, resp, true
 	}
 
-	// Type is Array and integer is negative.
+	// Error: Type is Array and integer is negative.
 	if length < 0 && resp.Type == Array {
 		return 0, RESPData{}, false
 	}
@@ -99,14 +99,14 @@ func DecodeFromRESP(b []byte) (numRead int, resp RESPData, success bool) {
 	if resp.Type == BulkString {
 		j := i
 
-		// Data length is too short
+		// Error: Data length is too short
 		if (i + length + 2) > len(b) {
 			return 0, RESPData{}, false
 		}
 
 		i += (length + 1)
 
-		// Didn't find an \r\n after reading appropriate amount of data
+		// Error: Didn't find an \r\n after reading appropriate amount of data
 		if !(b[i] == '\n' && b[i-1] == '\r') {
 			return 0, RESPData{}, false
 		}
@@ -120,14 +120,14 @@ func DecodeFromRESP(b []byte) (numRead int, resp RESPData, success bool) {
 	// Now "length" represents the number of elements in the array
 	resp.NestedRESPData = make([]RESPData, length)
 	for idx := 0; idx < length; idx++ {
-		// Not enough array elements were able to be read.
+		// Errror: Not enough array elements were able to be read.
 		if i == len(b) {
 			return 0, RESPData{}, false
 		}
 
 		rread, rresp, rsuccess := DecodeFromRESP(b[i:])
 
-		// One of the array RESP elements was unsuccessfully parsed.
+		// Error: One of the array RESP elements was unsuccessfully parsed.
 		if !rsuccess {
 			return 0, RESPData{}, false
 		}
@@ -156,6 +156,10 @@ func EncodeToRESP(r RESPData) (b []byte, success bool) {
 		s := ":" + string(r.Data) + "\r\n"
 		return []byte(s), true
 	case BulkString:
+		if r.Data == nil {
+			return []byte("$-1\r\n"), true
+		}
+
 		strlen := len(r.Data)
 		s := "$" + strconv.Itoa(strlen) + "\r\n" + string(r.Data) + "\r\n"
 		return []byte(s), true

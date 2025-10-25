@@ -6,7 +6,32 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 )
+
+type DB struct {
+	data map[string]RESPData
+	mu sync.Mutex
+}
+
+func (db *DB) Set(key string, val RESPData) {
+	db.mu.Lock()
+	db.data[key] = val
+	db.mu.Unlock()
+}
+
+func (db *DB) Get(key string) (RESPData, bool) {
+	db.mu.Lock()
+	val, ok := db.data[key]
+	db.mu.Unlock()
+	return val, ok 
+}
+
+func NewDB() *DB {
+	return &(DB{ data: make(map[string]RESPData) })
+}
+
+var globalDB *DB = NewDB()
 
 func handleConn(conn net.Conn) {
 	// Continuously read messages from connection.
@@ -33,8 +58,11 @@ func handleConn(conn net.Conn) {
 		}
 
 		// Extract the first word to get the command
-		command := string(respData.NestedRESPData[0].Data)
+		request := respData.NestedRESPData
+		command := string(request[0].Data)
 		var output []byte
+
+		// Handle the different commands
 		switch strings.ToLower(command) {
 		case "echo":
 			output, success = EncodeToRESP(RESPData{Type:BulkString, Data:respData.NestedRESPData[1].Data})
@@ -44,13 +72,26 @@ func handleConn(conn net.Conn) {
 			}
 		case "ping":
 			output = []byte("+PONG\r\n")
+		case "set":
+			key := string(request[1].Data)
+			val := request[2]
+			globalDB.Set(key, val)
+		case "get":
+			key := string(request[1].Data)
+			val, ok := globalDB.Get(key)
+			if !ok {
+				output = []byte("$-1\r\n")
+			} else {
+				output, _ = EncodeToRESP(val)
+			}
+
 		default:
 			output = []byte("I have never seen this command before.")
 
 		}
 		_, err = conn.Write(output)
 		if err != nil {
-			fmt.Println("Error sending PONG response: ", err.Error())
+			fmt.Println("Error sending response: ", err.Error())
 			return
 		}
 		
