@@ -12,6 +12,7 @@ var (
 	respOK   = []byte("+OK\r\n")
 	respPong = []byte("+PONG\r\n")
 	respNull = []byte("$-1\r\n")
+	respEmptyArr = []byte("$*0\r\n")
 )
 
 type CommandHandler struct {
@@ -76,14 +77,43 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 
 	val, _ := h.db.Get(key)
 	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+
 	val.NestedRESPData = append(val.NestedRESPData, args[2:]...)
-	h.db.mu.Unlock()
 	newLen := strconv.Itoa(len(val.NestedRESPData))
 
 	return EncodeToRESP(
 		&RESPData{
 			Type: Integer, 
 			Data: []byte(newLen),
+		})
+
+}
+
+func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
+	if len(args) != 3 {
+		return nil, false
+	}
+
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+	resp, ok := h.db.Get(string(args[1].Data))
+	if !ok {
+		return respEmptyArr, true
+	}
+
+	start, _ := strconv.Atoi(string(args[2].Data))
+	stop, _ := strconv.Atoi(string(args[3].Data))
+	arrLen := len(resp.NestedRESPData)
+	stop = min(stop, arrLen-1)
+	if start >= arrLen || start < 0 || stop < start {
+		return respEmptyArr, true
+	}
+
+	return EncodeToRESP(
+		&RESPData{
+			Type: Array,
+			NestedRESPData: resp.NestedRESPData[start:stop+1],
 		})
 
 }
@@ -112,6 +142,8 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return h.HandleGet(request)
 	case "rpush":
 		return h.HandleRPush(request)
+	case "lrange":
+		return h.HandleLRange(request)
 	default:
 		return nil, false
 	}

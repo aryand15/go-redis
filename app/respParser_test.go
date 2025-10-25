@@ -81,3 +81,41 @@ func TestDecodeFromComplexArray(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeEmptyArray(t *testing.T) {
+	input := []byte("*0\r\n")
+	numRead, resp, success := DecodeFromRESP(input)
+
+	if !success {
+		t.Errorf("Expected success to be true, got false")
+	}
+
+	if numRead != len(input) {
+		t.Errorf("Expected numRead to be %d, got %d", len(input), numRead)
+	}
+
+	if resp.Type != Array {
+		t.Errorf("Expected RESP type to be Array, got %v", resp.Type)
+	}
+
+	if len(resp.NestedRESPData) != 0 {
+		t.Errorf("Expected 0 nested RESP data elements, got %d", len(resp.NestedRESPData))
+	}
+}
+
+func TestEncodeEmptyArray(t *testing.T) {
+	resp := &RESPData{
+		Type:           Array,
+		NestedRESPData: []*RESPData{},
+	}
+
+	encoded, success := EncodeToRESP(resp)
+	if !success {
+		t.Errorf("Expected no error during encoding, got an error")
+	}
+
+	expected := "*0\r\n"
+	if string(encoded) != expected {
+		t.Errorf("Expected encoded RESP to be '%s', got '%s'", expected, string(encoded))
+	}
+}
