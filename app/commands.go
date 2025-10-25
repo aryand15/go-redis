@@ -119,11 +119,11 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 	}
 
 	for _, val := range resp.NestedRESPData {
-		fmt.Println(string(val.Data))
+		fmt.Println("Total array:", string(val.Data))
 	}
 
 	for _, val := range resp.NestedRESPData[start:stop+1] {
-		fmt.Println(string(val.Data))
+		fmt.Println("sliced array:", string(val.Data))
 	}
 
 	return EncodeToRESP(
