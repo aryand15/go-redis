@@ -111,10 +111,18 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 	if !ok {
 		return respEmptyArr, true
 	}
-	
-	start, _ := strconv.Atoi(string(args[2].Data))
-	stop, _ := strconv.Atoi(string(args[3].Data))
+
 	arrLen := len(resp.NestedRESPData)
+	start, _ := strconv.Atoi(string(args[2].Data))
+	if start < 0 {
+		start = arrLen + start
+		start = max(0, start)
+	}
+	stop, _ := strconv.Atoi(string(args[3].Data))
+	if stop < 0 {
+		stop = arrLen + stop
+		stop = max(0, stop)
+	}
 	stop = min(stop, arrLen-1)
 	if start >= arrLen || start < 0 || stop < start || arrLen == 0 {
 		return respEmptyArr, true
