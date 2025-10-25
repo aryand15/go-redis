@@ -78,7 +78,7 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 	defer h.db.mu.Unlock()
 	val, ok := h.db.Get(key)
 	if !ok {
-		val := &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)}
+		val = &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)}
 		h.db.Set(key, val)
 	}
 
