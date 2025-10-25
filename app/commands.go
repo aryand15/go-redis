@@ -12,7 +12,7 @@ var (
 	respOK   = []byte("+OK\r\n")
 	respPong = []byte("+PONG\r\n")
 	respNull = []byte("$-1\r\n")
-	respEmptyArr = []byte("$*0\r\n")
+	respEmptyArr = []byte("*0\r\n")
 )
 
 type CommandHandler struct {
@@ -70,14 +70,15 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 		return nil, false
 	}
 	key := string(args[1].Data)
-	h.db.mu.Lock()
-	defer h.db.mu.Unlock()
 	_, ok := h.db.Get(key)
 	if !ok {
 		h.db.Set(key, &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)})
 	}
 
 	val, _ := h.db.Get(key)
+
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
 	val.NestedRESPData = append(val.NestedRESPData, args[2:]...)
 	newLen := strconv.Itoa(len(val.NestedRESPData))
 
@@ -94,13 +95,13 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 		return nil, false
 	}
 
-	h.db.mu.Lock()
-	defer h.db.mu.Unlock()
 	resp, ok := h.db.Get(string(args[1].Data))
 	if !ok {
 		return respEmptyArr, true
 	}
 
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
 	start, _ := strconv.Atoi(string(args[2].Data))
 	fmt.Println(start)
 	stop, _ := strconv.Atoi(string(args[3].Data))
