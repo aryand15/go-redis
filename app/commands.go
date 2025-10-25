@@ -77,7 +77,7 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
 	val, ok := h.db.Get(key)
-	if !ok {
+	if !ok || val.Type != Array {
 		val = &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)}
 		h.db.Set(key, val)
 	}
@@ -104,7 +104,7 @@ func (h *CommandHandler) HandleLPush(args []*RESPData) ([]byte, bool) {
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
 	val, ok := h.db.Get(key)
-	if !ok {
+	if !ok || val.Type != Array {
 		val = &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)}
 		h.db.Set(key, val)
 	}
@@ -136,7 +136,7 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
 	resp, ok := h.db.Get(string(args[1].Data))
-	if !ok {
+	if !ok || resp.Type != Array {
 		return respEmptyArr, true
 	}
 
@@ -172,11 +172,30 @@ func (h *CommandHandler) HandleLlen(args []*RESPData) ([]byte, bool) {
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
 	arrResp, ok := h.db.Get(arrName)
-	if !ok {
+	if !ok || arrResp.Type != Array{
 		return EncodeToRESP(&RESPData{Type: Integer, Data: []byte("0")})
 	}
 
 	return EncodeToRESP(&RESPData{Type: Integer, Data: []byte(strconv.Itoa(len(arrResp.NestedRESPData)))})
+
+
+}
+
+func (h *CommandHandler) HandleLpop(args []*RESPData) ([]byte, bool) {
+	if len(args) != 2 {
+		return nil, false
+	}
+	arrName := string(args[1].Data)
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+	arrResp, ok := h.db.Get(arrName)
+	if !ok || arrResp.Type != Array {
+		return respNull, true
+	}
+
+	firstElem := CloneRESP(arrResp.NestedRESPData[0])
+	arrResp.NestedRESPData = arrResp.NestedRESPData[1:]
+	return EncodeToRESP(&RESPData{Type: Array, Data: firstElem.Data})
 
 
 }
@@ -211,6 +230,8 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return h.HandleLRange(request)
 	case "llen":
 		return h.HandleLlen(request)
+	case "lpop":
+		return h.HandleLpop(request)
 	default:
 		return nil, false
 	}
