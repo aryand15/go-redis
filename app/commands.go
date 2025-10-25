@@ -100,9 +100,7 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 		fmt.Println(thing)
 	}
 	start, _ := strconv.Atoi(string(args[2].Data))
-	fmt.Println(start)
 	stop, _ := strconv.Atoi(string(args[3].Data))
-	fmt.Println(stop)
 	arrLen := len(resp.NestedRESPData)
 	stop = min(stop, arrLen-1)
 	if start >= arrLen || start < 0 || stop < start || arrLen == 0 {
