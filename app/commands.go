@@ -91,7 +91,7 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 }
 
 func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
-	if len(args) != 3 {
+	if len(args) != 4 {
 		return nil, false
 	}
 
