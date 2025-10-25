@@ -210,6 +210,9 @@ func (h *CommandHandler) HandleLpop(args []*RESPData) ([]byte, bool) {
 	} else {
 		arrResp.NestedRESPData = arrResp.NestedRESPData[numToRemove:]
 	}
+	if (numToRemove == 1) {
+		return EncodeToRESP(ret.NestedRESPData[0])
+	}
 	return EncodeToRESP(ret)
 
 
