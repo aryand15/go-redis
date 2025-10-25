@@ -109,16 +109,21 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 	if !ok {
 		return respEmptyArr, true
 	}
-	for _, val := range resp.NestedRESPData {
-		decoded, _ := EncodeToRESP(val)
-		fmt.Println(string(decoded))
-	}
+	
 	start, _ := strconv.Atoi(string(args[2].Data))
 	stop, _ := strconv.Atoi(string(args[3].Data))
 	arrLen := len(resp.NestedRESPData)
 	stop = min(stop, arrLen-1)
 	if start >= arrLen || start < 0 || stop < start || arrLen == 0 {
 		return respEmptyArr, true
+	}
+
+	for _, val := range resp.NestedRESPData {
+		fmt.Println(string(val.Data))
+	}
+
+	for _, val := range resp.NestedRESPData[start:stop+1] {
+		fmt.Println(string(val.Data))
 	}
 
 	return EncodeToRESP(
