@@ -65,7 +65,7 @@ func (h *CommandHandler) HandleGet(args []*RESPData) ([]byte, bool) {
 }
 
 func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
-	if len(args) != 3 {
+	if len(args) < 3 {
 		return nil, false
 	}
 	key := string(args[1].Data)
