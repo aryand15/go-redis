@@ -164,6 +164,23 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 
 }
 
+func (h *CommandHandler) HandleLlen(args []*RESPData) ([]byte, bool) {
+	if len(args) != 2 {
+		return nil, false
+	}
+	arrName := string(args[1].Data)
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+	arrResp, ok := h.db.Get(arrName)
+	if !ok {
+		return EncodeToRESP(&RESPData{Type: Integer, Data: []byte("0")})
+	}
+
+	return EncodeToRESP(&RESPData{Type: Integer, Data: []byte(strconv.Itoa(len(arrResp.NestedRESPData)))})
+
+
+}
+
 func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 	_, respData, success := DecodeFromRESP(message)
 	if !success || respData.Type != Array {
@@ -192,6 +209,8 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return h.HandleLPush(request)
 	case "lrange":
 		return h.HandleLRange(request)
+	case "llen":
+		return h.HandleLlen(request)
 	default:
 		return nil, false
 	}
