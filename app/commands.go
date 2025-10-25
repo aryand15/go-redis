@@ -195,7 +195,7 @@ func (h *CommandHandler) HandleLpop(args []*RESPData) ([]byte, bool) {
 
 	firstElem := CloneRESP(arrResp.NestedRESPData[0])
 	arrResp.NestedRESPData = arrResp.NestedRESPData[1:]
-	return EncodeToRESP(&RESPData{Type: Array, Data: firstElem.Data})
+	return EncodeToRESP(firstElem)
 
 
 }
