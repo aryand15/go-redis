@@ -3,7 +3,8 @@ package main
 import (
 	"sync"
 	"time"
-	"fmt"
+	"strings"
+	"strconv"
 )
 
 
@@ -29,15 +30,13 @@ type StreamEntry struct {
 }
 
 func (s *StreamEntry) GetMillis() int {
-	var millis int
-	fmt.Sscanf(s.id, "%d-", &millis)
-	return int(millis)
+	m, _ := strconv.Atoi(strings.Split(s.id, "-")[0])
+	return m
 }
 
 func (s *StreamEntry) GetSeqNum() int {
-	var seqNum int
-	fmt.Sscanf(s.id, "-%d", &seqNum)
-	return seqNum
+	n, _ := strconv.Atoi(strings.Split(s.id, "-")[1])
+	return n
 }
 
 
