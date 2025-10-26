@@ -391,6 +391,9 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 	// Cannot be 0-0
 	if id == "0-0" {
 		return []byte("-ERR The ID specified in XADD must be greater than 0-0\r\n"), true
+	// Edge case: no previous entries and millis is 0
+	} else if id == "0-*" && len(stream) == 0 {
+		id = "0-1"
 	// If ID is *, generate new ID based on previous entry (if exists)
 	} else if id == "*" && len(stream) == 0 {
 		id = fmt.Sprintf("%d-%d", time.Now().UnixMilli(), 0)
