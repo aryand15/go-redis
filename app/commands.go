@@ -97,20 +97,18 @@ func (h *CommandHandler) HandleRPUSH(args []*RESPData) ([]byte, bool) {
 	}
 
 	// If array doesn't exist, create an empty array belonging to that key
-	val, ok := h.db.GetList(key)
-	if !ok {
-		val = make([]string, 0)
-		h.db.SetList(key, val)
+	if _, ok := h.db.GetList(key); !ok {
+		h.db.SetList(key, make([]string, 0))
 	}
 
 	// Add all elements to the array
 	for i := 2; i < len(args); i++ {
-		val = append(val, args[i].String())
+		h.db.listData[key] = append(h.db.listData[key], args[i].String())
 	}
 
 	// If there are clients blocked on a BLPOP, send first elem through the first channel
 	if waitChans, ok := h.db.blpopWaiters[key]; ok {
-		popped := val[0]
+		popped := h.db.listData[key][0]
 		waitChans[0] <- popped // Send the popped element through the channel to the client who called BLPOP first
 		close(waitChans[0])    // Close the channel
 
@@ -118,7 +116,7 @@ func (h *CommandHandler) HandleRPUSH(args []*RESPData) ([]byte, bool) {
 	}
 
 	// Return length of array
-	return EncodeToRESP(ConvertIntToRESP(len(val)))
+	return EncodeToRESP(ConvertIntToRESP(len(h.db.blpopWaiters[key])))
 
 }
 
@@ -141,32 +139,30 @@ func (h *CommandHandler) HandleLPUSH(args []*RESPData) ([]byte, bool) {
 	}
 
 	// If array doesn't exist, create an empty array belonging to that key
-	val, ok := h.db.GetList(key)
-	if !ok {
-		val = make([]string, 0)
-		h.db.SetList(key, val)
+	if _, ok := h.db.GetList(key); !ok {
+		h.db.SetList(key, make([]string, 0))
 	}
 
 	// Create a new bigger array to hold the old + newly appended elements
-	newArr := make([]string, len(val)+len(args)-2)
+	newArr := make([]string, len(h.db.listData[key])+len(args)-2)
 	for i := 0; i < len(args)-2; i++ {
 		newArr[i] = args[len(args)-1-i].String()
 	}
 	for i := len(args) - 2; i < len(newArr); i++ {
-		newArr[i] = val[i-len(args)+2]
+		newArr[i] = h.db.listData[key][i-len(args)+2]
 	}
-	val = newArr
+	h.db.listData[key] = newArr
 
 	// If there are clients blocked on a BLPOP, send first elem through the first channel
 	if waitChans, ok := h.db.blpopWaiters[key]; ok {
-		popped := val[0]
+		popped := h.db.listData[key][0]
 		waitChans[0] <- popped // Send the popped element through the channel to the client who called BLPOP first
 		close(waitChans[0])    // Close the channel
 
 		h.db.blpopWaiters[key] = h.db.blpopWaiters[key][1:] // Remove client off the queue
 	}
 
-	return EncodeToRESP(ConvertIntToRESP(len(val)))
+	return EncodeToRESP(ConvertIntToRESP(len(h.db.listData[key])))
 
 }
 
