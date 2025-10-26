@@ -86,8 +86,17 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 		val.NestedRESPData = append(val.NestedRESPData, CloneRESP(args[i]))
 	}
 
-	newLen := strconv.Itoa(len(val.NestedRESPData))
+	// If there are clients blocked on a BLPOP, send first elem through the first channel
+	firstElem := string(val.NestedRESPData[0].Data)
+	if waitChans, ok := h.db.waiters[firstElem]; ok {
+		popped := val.NestedRESPData[0]
+		val.NestedRESPData = val.NestedRESPData[1:] // Remove the popped element from the array
+		waitChans[0] <- popped // Send the popped element through the channel to the client who called BLPOP first
+		close(waitChans[0]) // Close the channel
+		h.db.waiters[firstElem] = h.db.waiters[firstElem][1:] // Remove client off the queue
+	}
 
+	newLen := strconv.Itoa(len(val.NestedRESPData))
 	return EncodeToRESP(
 		&RESPData{
 			Type: Integer, 
