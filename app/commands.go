@@ -317,6 +317,8 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return h.HandleLlen(request)
 	case "lpop":
 		return h.HandleLpop(request)
+	case "blpop":
+		return h.HandleBlpop(request)
 	default:
 		return nil, false
 	}
