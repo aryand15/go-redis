@@ -438,6 +438,8 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return h.HandleBLPOP(request)
 	case "type":
 		return h.HandleTYPE(request)
+	case "xadd":
+		return h.HandleXADD(request)
 	default:
 		return nil, false
 	}
