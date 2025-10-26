@@ -380,6 +380,12 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 
 	id := args[2].String()
 
+	//debugging
+	if (len(stream) > 0) {
+		fmt.Println("Previous stream top item ID: ", stream[len(stream)-1].id)
+		fmt.Println("ID to be added: ", id)
+	}
+
 	// Validate ID
 
 	// Cannot be 0-0
