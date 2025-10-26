@@ -73,29 +73,34 @@ func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
 	if len(args) < 3 {
 		return nil, false
 	}
+
+	// The name of the array for which we want to push
 	key := string(args[1].Data)
+
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
 	val, ok := h.db.Get(key)
+
+	// If array doesn't exist, create an empty array belonging to that key
 	if !ok || val.Type != Array {
 		val = &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)}
 		h.db.Set(key, val)
 	}
 
+	// Add all elements to the array
 	for i := 2; i < len(args); i++ {
 		val.NestedRESPData = append(val.NestedRESPData, CloneRESP(args[i]))
 	}
 
 	// If there are clients blocked on a BLPOP, send first elem through the first channel
-	firstElem := string(val.NestedRESPData[0].Data)
-	if waitChans, ok := h.db.waiters[firstElem]; ok {
+	if waitChans, ok := h.db.waiters[key]; ok {
 		popped := val.NestedRESPData[0]
-		val.NestedRESPData = val.NestedRESPData[1:] // Remove the popped element from the array
 		waitChans[0] <- popped // Send the popped element through the channel to the client who called BLPOP first
 		close(waitChans[0]) // Close the channel
-		h.db.waiters[firstElem] = h.db.waiters[firstElem][1:] // Remove client off the queue
+		
+		h.db.waiters[key] = h.db.waiters[key][1:] // Remove client off the queue
 	}
-
+	// Return length of array
 	newLen := strconv.Itoa(len(val.NestedRESPData))
 	return EncodeToRESP(
 		&RESPData{
@@ -134,13 +139,12 @@ func (h *CommandHandler) HandleLPush(args []*RESPData) ([]byte, bool) {
 	val.NestedRESPData = newArr
 
 	// If there are clients blocked on a BLPOP, send first elem through the first channel
-	firstElem := string(val.NestedRESPData[0].Data)
-	if waitChans, ok := h.db.waiters[firstElem]; ok {
+	if waitChans, ok := h.db.waiters[key]; ok {
 		popped := val.NestedRESPData[0]
-		val.NestedRESPData = val.NestedRESPData[1:] // Remove the popped element from the array
 		waitChans[0] <- popped // Send the popped element through the channel to the client who called BLPOP first
 		close(waitChans[0]) // Close the channel
-		h.db.waiters[firstElem] = h.db.waiters[firstElem][1:] // Remove client off the queue
+		
+		h.db.waiters[key] = h.db.waiters[key][1:] // Remove client off the queue
 	}
 
 	
@@ -211,30 +215,36 @@ func (h *CommandHandler) HandleBlpop(args []*RESPData) ([]byte, bool) {
 	if len(args) != 3 {
 		return nil, false
 	}
+
+	// Get the name of the array to pop from
 	keyResp := args[1]
 	key := string(keyResp.Data)
+
 	//duration := args[2]
+
 	h.db.mu.Lock()
 	data, ok := h.db.data[key]
+
+	// If the array exists and has elements, pop and return immediately
 	if ok && data.Type == Array && len(data.NestedRESPData) > 0 {
-		// If the array exists and has elements, pop and return immediately
 		poppedVal := data.NestedRESPData[0]
 		data.NestedRESPData = data.NestedRESPData[1:]
 		h.db.mu.Unlock()
 		return EncodeToRESP(&RESPData{Type: Array, NestedRESPData: []*RESPData{keyResp, poppedVal}})
 	}
-	_, ok = h.db.waiters[key]
-	if !ok {
+	
+	// Add client to list of blocked clients on this array
+	if _, ok = h.db.waiters[key]; !ok {
 		h.db.waiters[key] = make([]chan *RESPData, 0)
 	}
 	c := make(chan *RESPData)
 	h.db.waiters[key] = append(h.db.waiters[key], c)
-	h.db.mu.Unlock()
+	h.db.mu.Unlock() // Make sure to remove mutex so other clients can modify DB while this one is blocked
 
 	// Block until channel received value (add duration later)
 	poppedVal := <-c
+	h.db.data[key].NestedRESPData = h.db.data[key].NestedRESPData[1:] // Remove the popped element from the array
 	return EncodeToRESP(&RESPData{Type: Array, NestedRESPData: []*RESPData{keyResp, poppedVal}})
-
 
 }
 
