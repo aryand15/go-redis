@@ -100,15 +100,21 @@ func (h *CommandHandler) HandleLPush(args []*RESPData) ([]byte, bool) {
 	if len(args) < 3 {
 		return nil, false
 	}
+
 	key := string(args[1].Data)
+
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
+
 	val, ok := h.db.Get(key)
+
+	// If the key doesn't exist as an array, create a new empty array
 	if !ok || val.Type != Array {
 		val = &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)}
 		h.db.Set(key, val)
 	}
 
+	// Create a new bigger array to hold the old + newly appended elements
 	newArr := make([]*RESPData, len(val.NestedRESPData) + len(args)-2)
 	for i := 0; i < len(args)-2; i++ {
 		newArr[i] = CloneRESP(args[len(args)-1-i])
@@ -117,8 +123,19 @@ func (h *CommandHandler) HandleLPush(args []*RESPData) ([]byte, bool) {
 		newArr[i] = CloneRESP(val.NestedRESPData[i-len(args)+2])
 	}
 	val.NestedRESPData = newArr
-	newLen := strconv.Itoa(len(val.NestedRESPData))
 
+	// If there are clients blocked on a BLPOP, send first elem through the first channel
+	firstElem := string(val.NestedRESPData[0].Data)
+	if waitChans, ok := h.db.waiters[firstElem]; ok {
+		popped := val.NestedRESPData[0]
+		val.NestedRESPData = val.NestedRESPData[1:] // Remove the popped element from the array
+		waitChans[0] <- popped // Send the popped element through the channel to the client who called BLPOP first
+		close(waitChans[0]) // Close the channel
+		h.db.waiters[firstElem] = h.db.waiters[firstElem][1:] // Remove client off the queue
+	}
+
+	
+	newLen := strconv.Itoa(len(val.NestedRESPData))
 	return EncodeToRESP(
 		&RESPData{
 			Type: Integer, 
@@ -177,6 +194,37 @@ func (h *CommandHandler) HandleLlen(args []*RESPData) ([]byte, bool) {
 	}
 
 	return EncodeToRESP(&RESPData{Type: Integer, Data: []byte(strconv.Itoa(len(arrResp.NestedRESPData)))})
+
+
+}
+
+func (h *CommandHandler) HandleBlpop(args []*RESPData) ([]byte, bool) {
+	if len(args) != 3 {
+		return nil, false
+	}
+	keyResp := args[1]
+	key := string(keyResp.Data)
+	//duration := args[2]
+	h.db.mu.Lock()
+	data, ok := h.db.data[key]
+	if ok && data.Type == Array && len(data.NestedRESPData) > 0 {
+		// If the array exists and has elements, pop and return immediately
+		poppedVal := data.NestedRESPData[0]
+		data.NestedRESPData = data.NestedRESPData[1:]
+		h.db.mu.Unlock()
+		return EncodeToRESP(&RESPData{Type: Array, NestedRESPData: []*RESPData{keyResp, poppedVal}})
+	}
+	_, ok = h.db.waiters[key]
+	if !ok {
+		h.db.waiters[key] = make([]chan *RESPData, 0)
+	}
+	c := make(chan *RESPData)
+	h.db.waiters[key] = append(h.db.waiters[key], c)
+	h.db.mu.Unlock()
+
+	// Block until channel received value (add duration later)
+	poppedVal := <-c
+	return EncodeToRESP(&RESPData{Type: Array, NestedRESPData: []*RESPData{keyResp, poppedVal}})
 
 
 }

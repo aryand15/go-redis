@@ -13,7 +13,9 @@ import (
 type DB struct {
 	data map[string]*RESPData
 	timers map[string]*time.Timer
+	waiters map[string][]chan *RESPData
 	mu   sync.Mutex // Prevents concurrency issues
+
 }
 
 func (db *DB) Set(key string, val *RESPData) {
@@ -53,6 +55,7 @@ func NewDB() *DB {
 	return &DB{
 		data: make(map[string]*RESPData),
 		timers: make(map[string]*time.Timer),
+		waiters: make(map[string][]chan *RESPData),
 	}
 }
 
