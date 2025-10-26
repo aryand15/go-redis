@@ -220,7 +220,11 @@ func (h *CommandHandler) HandleBlpop(args []*RESPData) ([]byte, bool) {
 	keyResp := args[1]
 	key := string(keyResp.Data)
 
-	//duration := args[2]
+	// Make sure duration is a non-negative double float
+	duration, err := strconv.ParseFloat(string(args[2].Data), 64)
+	if err != nil || duration < 0 {
+		return nil, false
+	}
 
 	h.db.mu.Lock()
 	data, ok := h.db.data[key]
@@ -241,10 +245,37 @@ func (h *CommandHandler) HandleBlpop(args []*RESPData) ([]byte, bool) {
 	h.db.waiters[key] = append(h.db.waiters[key], c)
 	h.db.mu.Unlock() // Make sure to remove mutex so other clients can modify DB while this one is blocked
 
-	// Block until channel received value (add duration later)
-	poppedVal := <-c
-	h.db.data[key].NestedRESPData = h.db.data[key].NestedRESPData[1:] // Remove the popped element from the array
-	return EncodeToRESP(&RESPData{Type: Array, NestedRESPData: []*RESPData{keyResp, poppedVal}})
+	// If duration is 0, block indefinitely until channel receives value
+	if (duration == 0) {
+		poppedVal := <-c
+		h.db.mu.Lock()
+		defer h.db.mu.Unlock()
+		h.db.data[key].NestedRESPData = h.db.data[key].NestedRESPData[1:] // Remove the popped element from the array
+		return EncodeToRESP(&RESPData{Type: Array, NestedRESPData: []*RESPData{keyResp, poppedVal}})
+	}
+
+	// Otherwise block until channel receives value or timeout occurs
+	select {
+	case <-time.After(time.Duration(duration * float64(time.Second))):
+		// Timeout occurred, remove client from waiters list
+		h.db.mu.Lock()
+		defer h.db.mu.Unlock()
+		// Remove channel from waiters list
+		waitChans := h.db.waiters[key]
+		for i, chanVal := range waitChans {
+			if chanVal == c {
+				h.db.waiters[key] = append(waitChans[:i], waitChans[i+1:]...)
+				break
+			}
+		}
+		return respNull, true
+	case poppedVal := <-c:
+		// Successfully received popped value
+		h.db.mu.Lock()
+		defer h.db.mu.Unlock()
+		h.db.data[key].NestedRESPData = h.db.data[key].NestedRESPData[1:] // Remove the popped element from the array
+		return EncodeToRESP(&RESPData{Type: Array, NestedRESPData: []*RESPData{keyResp, poppedVal}})
+	}
 
 }
 
