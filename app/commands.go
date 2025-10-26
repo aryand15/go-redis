@@ -246,7 +246,7 @@ func (h *CommandHandler) HandleBlpop(args []*RESPData) ([]byte, bool) {
 	h.db.mu.Unlock() // Make sure to remove mutex so other clients can modify DB while this one is blocked
 
 	// If duration is 0, block indefinitely until channel receives value
-	if (duration == 0) {
+	if (duration == 0.0) {
 		poppedVal := <-c
 		h.db.mu.Lock()
 		defer h.db.mu.Unlock()
