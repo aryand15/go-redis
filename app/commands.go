@@ -389,7 +389,7 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 
 	// Populate the stream entry to be added to the stream
 	entry := &StreamEntry{id: id, values: make(map[string]string)}
-	for i := 4; i < len(args); i += 2 {
+	for i := 3; i < len(args); i += 2 {
 		key := args[i].String()
 		val := args[i+1].String()
 		entry.values[key] = val
