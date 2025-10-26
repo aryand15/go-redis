@@ -14,6 +14,7 @@ var (
 	respNullString = []byte("$-1\r\n")
 	respEmptyArr   = []byte("*0\r\n")
 	respNullArr  = []byte("*-1\r\n")
+	respNoneString = []byte("+none\r\n")
 )
 
 type CommandHandler struct {
@@ -312,6 +313,26 @@ func (h *CommandHandler) HandleLpop(args []*RESPData) ([]byte, bool) {
 
 }
 
+func (h* CommandHandler) HandleType(args []*RESPData) ([]byte, bool) {
+	if len(args) != 2 {
+		return nil, false
+	}
+	
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+	resp, ok := h.db.data[string(args[1].Data)]
+	if !ok {
+		return respNoneString, true
+	}
+
+	switch resp.Type {
+	case SimpleString, BulkString:
+		return []byte("+string\r\n"), true
+	default:
+		return respNoneString, true
+	}
+}
+
 func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 	_, respData, success := DecodeFromRESP(message)
 	if !success || respData.Type != Array {
@@ -346,6 +367,8 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return h.HandleLpop(request)
 	case "blpop":
 		return h.HandleBlpop(request)
+	case "type":
+		return h.HandleType(request)
 	default:
 		return nil, false
 	}
