@@ -363,7 +363,7 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 	}
 
 	sname := args[1].String()
-	id := args[2].String()
+	
 
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
@@ -378,6 +378,41 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 		stream = make([]*StreamEntry, 0)
 	}
 
+	id := args[2].String()
+
+	// Validate ID
+
+	// Cannot be 0-0
+	if id == "0-0" {
+		return []byte("-ERR The ID specified in XADD must be greater than 0-0\r\n"), true
+	// If ID is *, generate new ID based on previous entry (if exists)
+	} else if id == "*" && len(stream) == 0 {
+		id = fmt.Sprintf("%d-%d", time.Now().UnixMilli(), 0)
+	} else if id == "*" {
+		id = generateNewStreamID(stream[len(stream)-1].id)
+	// Make sure ID is in the format int-int or int-*
+	} else if idParts := strings.Split(id, "-"); len(idParts) != 2 {
+		return nil, false
+	} else if millis, err1 := strconv.Atoi(idParts[0]); err1 != nil {
+		return nil, false
+	} else if seqNum, err2 := strconv.Atoi(idParts[1]); err2 != nil && idParts[1] != "*" {
+		return nil, false
+	// Make sure millis is greater than or equal to previous entry's millis
+	} else if len(stream) > 0 && millis < stream[len(stream)-1].GetMillis() {
+		return []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"), true
+	// Handle int-* case
+	} else if idParts[1] == "*" && len(stream) > 0 && millis == stream[len(stream)-1].GetMillis() {
+		id = fmt.Sprintf("%d-%d", millis, stream[len(stream)-1].GetSeqNum()+1)
+	} else if idParts[1] == "*" {
+		id = fmt.Sprintf("%d-0", millis)
+	// Make sure seqNum is greater than previous entry's seqNum if millis are equal
+	} else if len(stream) > 0 && seqNum <= stream[len(stream)-1].GetSeqNum() && millis == stream[len(stream)-1].GetMillis() {
+		return []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"), true
+	} else {
+		// ID is valid, do nothing
+	} 
+
+
 	// Populate the stream entry to be added to the stream
 	entry := &StreamEntry{id: id, values: make(map[string]string)}
 	for i := 3; i < len(args); i += 2 {
@@ -391,6 +426,24 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 
 	// Return the ID of the stream that was just added
 	return EncodeToRESP(ConvertBulkStringToRESP(id))
+}
+
+func generateNewStreamID(prevId string) string {
+	prevIdParts := strings.Split(prevId, "-")
+	prevMillis, _ := strconv.Atoi(prevIdParts[0])
+	prevSeqNum, _ := strconv.Atoi(prevIdParts[1])
+
+	currMillis := time.Now().UnixMilli()
+	seqNum := 0
+	if currMillis < int64(prevMillis) {
+		currMillis = int64(prevMillis)
+	}
+
+	if currMillis == int64(prevMillis) {
+		seqNum = prevSeqNum + 1
+	}
+
+	return fmt.Sprintf("%d-%d", currMillis, seqNum)
 }
 
 func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {

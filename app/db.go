@@ -3,6 +3,7 @@ package main
 import (
 	"sync"
 	"time"
+	"fmt"
 )
 
 
@@ -25,6 +26,18 @@ type DB struct {
 type StreamEntry struct { 
 	id string 
 	values map[string]string 
+}
+
+func (s *StreamEntry) GetMillis() int {
+	var millis int
+	fmt.Sscanf(s.id, "%d-", &millis)
+	return int(millis)
+}
+
+func (s *StreamEntry) GetSeqNum() int {
+	var seqNum int
+	fmt.Sscanf(s.id, "-%d", &seqNum)
+	return seqNum
 }
 
 
