@@ -116,7 +116,7 @@ func (h *CommandHandler) HandleRPUSH(args []*RESPData) ([]byte, bool) {
 	}
 
 	// Return length of array
-	return EncodeToRESP(ConvertIntToRESP(len(h.db.blpopWaiters[key])))
+	return EncodeToRESP(ConvertIntToRESP(len(h.db.listData[key])))
 
 }
 
@@ -143,15 +143,10 @@ func (h *CommandHandler) HandleLPUSH(args []*RESPData) ([]byte, bool) {
 		h.db.SetList(key, make([]string, 0))
 	}
 
-	// Create a new bigger array to hold the old + newly appended elements
-	newArr := make([]string, len(h.db.listData[key])+len(args)-2)
-	for i := 0; i < len(args)-2; i++ {
-		newArr[i] = args[len(args)-1-i].String()
+	// Prepend elements to array
+	for i := 2; i < len(args); i++ {
+		h.db.listData[key] = append([]string{args[i].String()}, h.db.listData[key]...)
 	}
-	for i := len(args) - 2; i < len(newArr); i++ {
-		newArr[i] = h.db.listData[key][i-len(args)+2]
-	}
-	h.db.listData[key] = newArr
 
 	// If there are clients blocked on a BLPOP, send first elem through the first channel
 	if waitChans, ok := h.db.blpopWaiters[key]; ok {
