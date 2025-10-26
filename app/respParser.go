@@ -24,27 +24,56 @@ func (t RESPType) Valid() bool {
 }
 
 type RESPData struct {
-	Type           RESPType
-	Data           []byte
-	NestedRESPData []*RESPData
+	Type         RESPType
+	Data         []byte
+	ListRESPData []*RESPData
 }
 
 func (r *RESPData) String() string {
 	return string(r.Data)
 }
 
+func (r *RESPData) Int() (int, error) {
+	return strconv.Atoi(r.String())
+}
+
 func CloneRESP(in *RESPData) *RESPData {
-    out := &RESPData{ Type: in.Type }
-    if in.Data != nil {
-        out.Data = append([]byte(nil), in.Data...)
-    }
-    if len(in.NestedRESPData) > 0 {
-        out.NestedRESPData = make([]*RESPData, len(in.NestedRESPData))
-        for i, child := range in.NestedRESPData {
-            out.NestedRESPData[i] = CloneRESP(child)
-        }
-    }
-    return out
+	out := &RESPData{Type: in.Type}
+	if in.Data != nil {
+		out.Data = append([]byte(nil), in.Data...)
+	}
+	if len(in.ListRESPData) > 0 {
+		out.ListRESPData = make([]*RESPData, len(in.ListRESPData))
+		for i, child := range in.ListRESPData {
+			out.ListRESPData[i] = CloneRESP(child)
+		}
+	}
+	return out
+}
+
+func ConvertBulkStringToRESP(s string) *RESPData {
+	return &RESPData{
+		Type: BulkString,
+		Data: []byte(s),
+	}
+}
+
+func ConvertIntToRESP(n int) *RESPData {
+	return &RESPData{
+		Type: Integer,
+		Data: []byte(strconv.Itoa(n)),
+	}
+}
+
+func convertListToRESP(arr []string) *RESPData {
+	listResp := &RESPData{
+		Type:         Array,
+		ListRESPData: make([]*RESPData, len(arr)),
+	}
+	for i, s := range arr {
+		listResp.ListRESPData[i] = ConvertBulkStringToRESP(s)
+	}
+	return listResp
 }
 
 func DecodeFromRESP(b []byte) (numRead int, resp *RESPData, success bool) {
@@ -135,7 +164,7 @@ func DecodeFromRESP(b []byte) (numRead int, resp *RESPData, success bool) {
 	// Now for the absolute beast. Handle the Array type.
 	// Array format: *<number-of-elements>\r\n<element-1>...<element-n>
 	// Now "length" represents the number of elements in the array
-	resp.NestedRESPData = make([]*RESPData, length)
+	resp.ListRESPData = make([]*RESPData, length)
 	for idx := 0; idx < length; idx++ {
 		// Errror: Not enough array elements were able to be read.
 		if i == len(b) {
@@ -150,7 +179,7 @@ func DecodeFromRESP(b []byte) (numRead int, resp *RESPData, success bool) {
 		}
 
 		// Add RESPData to list of array elements
-		resp.NestedRESPData[idx] = rresp
+		resp.ListRESPData[idx] = rresp
 		// Update number of read bytes
 		i += rread
 	}
@@ -181,9 +210,9 @@ func EncodeToRESP(r *RESPData) (b []byte, success bool) {
 		s := "$" + strconv.Itoa(strlen) + "\r\n" + string(r.Data) + "\r\n"
 		return []byte(s), true
 	case Array:
-		arrlen := len(r.NestedRESPData)
+		arrlen := len(r.ListRESPData)
 		s := "*" + strconv.Itoa(arrlen) + "\r\n"
-		for _, rr := range r.NestedRESPData {
+		for _, rr := range r.ListRESPData {
 			res, suc := EncodeToRESP(rr)
 			if !suc {
 				return nil, false
@@ -193,6 +222,6 @@ func EncodeToRESP(r *RESPData) (b []byte, success bool) {
 		return []byte(s), true
 	default:
 		return nil, false
-		
+
 	}
 }

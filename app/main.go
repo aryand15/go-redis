@@ -5,59 +5,9 @@ import (
 	"io"
 	"net"
 	"os"
-	"sync"
-	"time"
 )
 
-// DB represents an in-memory key-value store
-type DB struct {
-	data map[string]*RESPData
-	timers map[string]*time.Timer
-	waiters map[string][]chan *RESPData
-	mu   sync.Mutex // Prevents concurrency issues
 
-}
-
-func (db *DB) Set(key string, val *RESPData) {
-	// If a timer already exists, remove it
-	if timer, ok := db.timers[key]; ok {
-		timer.Stop()
-	}
-	db.data[key] = val
-	
-
-}
-
-func (db *DB) TimedSet(key string, val *RESPData, duration time.Duration) {
-	// If a timer already exists, stop it so that key doesn't get deleted twice
-	if timer, ok := db.timers[key]; ok{
-		timer.Stop()
-	}
-
-	db.data[key] = val
-	db.timers[key] = time.AfterFunc(duration, func() {db.remove(key)})
-	
-}
-
-func (db *DB) Get(key string) (*RESPData, bool) {
-	val, ok := db.data[key]
-	return val, ok
-}
-
-func (db *DB) remove(key string) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	delete(db.data, key)
-	delete(db.timers, key)
-}
-
-func NewDB() *DB {
-	return &DB{
-		data: make(map[string]*RESPData),
-		timers: make(map[string]*time.Timer),
-		waiters: make(map[string][]chan *RESPData),
-	}
-}
 
 const (
 	defaultPort = ":6379"

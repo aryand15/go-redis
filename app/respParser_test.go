@@ -41,16 +41,16 @@ func TestDecodeFromArray(t *testing.T) {
 		t.Errorf("Expected RESP type to be Array, got %v", resp.Type)
 	}
 
-	if len(resp.NestedRESPData) != 2 {
-		t.Errorf("Expected 2 nested RESP data elements, got %d", len(resp.NestedRESPData))
+	if len(resp.ListRESPData) != 2 {
+		t.Errorf("Expected 2 nested RESP data elements, got %d", len(resp.ListRESPData))
 	}
 
-	if resp.NestedRESPData[0].Type != BulkString || resp.NestedRESPData[0].String() != "GET" {
-		t.Errorf("Expected first element to be BulkString 'GET', got type %v and data '%s'", resp.NestedRESPData[0].Type, resp.NestedRESPData[0].String())
+	if resp.ListRESPData[0].Type != BulkString || resp.ListRESPData[0].String() != "GET" {
+		t.Errorf("Expected first element to be BulkString 'GET', got type %v and data '%s'", resp.ListRESPData[0].Type, resp.ListRESPData[0].String())
 	}
 
-	if resp.NestedRESPData[1].Type != BulkString || resp.NestedRESPData[1].String() != "key" {
-		t.Errorf("Expected second element to be BulkString 'key', got type %v and data '%s'", resp.NestedRESPData[1].Type, resp.NestedRESPData[1].String())
+	if resp.ListRESPData[1].Type != BulkString || resp.ListRESPData[1].String() != "key" {
+		t.Errorf("Expected second element to be BulkString 'key', got type %v and data '%s'", resp.ListRESPData[1].Type, resp.ListRESPData[1].String())
 	}
 }
 
@@ -70,14 +70,14 @@ func TestDecodeFromComplexArray(t *testing.T) {
 		t.Errorf("Expected RESP type to be Array, got %v", resp.Type)
 	}
 
-	if len(resp.NestedRESPData) != 7 {
-		t.Errorf("Expected 3 nested RESP data elements, got %d", len(resp.NestedRESPData))
+	if len(resp.ListRESPData) != 7 {
+		t.Errorf("Expected 3 nested RESP data elements, got %d", len(resp.ListRESPData))
 	}
 
 	expectedValues := []string{"RPUSH", "grape", "orange", "pear", "strawberry", "banana", "pineapple"}
 	for i, expected := range expectedValues {
-		if resp.NestedRESPData[i].Type != BulkString || resp.NestedRESPData[i].String() != expected {
-			t.Errorf("Expected element %d to be BulkString '%s', got type %v and data '%s'", i, expected, resp.NestedRESPData[i].Type, resp.NestedRESPData[i].String())
+		if resp.ListRESPData[i].Type != BulkString || resp.ListRESPData[i].String() != expected {
+			t.Errorf("Expected element %d to be BulkString '%s', got type %v and data '%s'", i, expected, resp.ListRESPData[i].Type, resp.ListRESPData[i].String())
 		}
 	}
 }
@@ -98,15 +98,15 @@ func TestDecodeEmptyArray(t *testing.T) {
 		t.Errorf("Expected RESP type to be Array, got %v", resp.Type)
 	}
 
-	if len(resp.NestedRESPData) != 0 {
-		t.Errorf("Expected 0 nested RESP data elements, got %d", len(resp.NestedRESPData))
+	if len(resp.ListRESPData) != 0 {
+		t.Errorf("Expected 0 nested RESP data elements, got %d", len(resp.ListRESPData))
 	}
 }
 
 func TestEncodeEmptyArray(t *testing.T) {
 	resp := &RESPData{
-		Type:           Array,
-		NestedRESPData: []*RESPData{},
+		Type:         Array,
+		ListRESPData: []*RESPData{},
 	}
 
 	encoded, success := EncodeToRESP(resp)

@@ -13,7 +13,7 @@ var (
 	respPong       = []byte("+PONG\r\n")
 	respNullString = []byte("$-1\r\n")
 	respEmptyArr   = []byte("*0\r\n")
-	respNullArr  = []byte("*-1\r\n")
+	respNullArr    = []byte("*-1\r\n")
 	respNoneString = []byte("+none\r\n")
 )
 
@@ -25,152 +25,168 @@ func NewCommandHandler(db *DB) *CommandHandler {
 	return &CommandHandler{db: db}
 }
 
-func (h *CommandHandler) HandleEcho(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleECHO(args []*RESPData) ([]byte, bool) {
 	if len(args) < 2 {
 		return nil, false
 	}
 	return EncodeToRESP(&RESPData{Type: BulkString, Data: args[1].Data})
 }
 
-func (h *CommandHandler) HandlePing() ([]byte, bool) {
+func (h *CommandHandler) HandlePING() ([]byte, bool) {
 	return respPong, true
 }
 
-func (h *CommandHandler) HandleSet(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleSET(args []*RESPData) ([]byte, bool) {
 	if len(args) != 3 && len(args) != 5 {
 		return nil, false
 	}
-	key := string(args[1].Data)
+	key := args[1].String()
+	val := args[2].String()
+
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
-	if len(args) == 3 {
-		h.db.Set(key, args[2])
-	} else if timeOption := string(args[3].Data); timeOption != "PX" && timeOption != "EX" {
+
+	// Make sure no other data type has the same key
+	if !h.db.CanSetString(key) {
 		return nil, false
-	} else if duration, err := strconv.Atoi(string(args[4].Data)); err != nil || duration < 0 {
+	}
+
+	if len(args) == 3 {
+		h.db.SetString(key, val)
+	} else if timeOption := args[3].String(); timeOption != "PX" && timeOption != "EX" {
+		return nil, false
+	} else if duration, err := args[4].Int(); err != nil || duration < 0 {
 		return nil, false
 	} else if timeOption == "EX" {
-		h.db.TimedSet(key, args[2], time.Duration(duration)*time.Second)
+		h.db.TimedSetString(key, val, time.Duration(duration)*time.Second)
 	} else if timeOption == "PX" {
-		h.db.TimedSet(key, args[2], time.Duration(duration)*time.Millisecond)
+		h.db.TimedSetString(key, val, time.Duration(duration)*time.Millisecond)
 	}
 	return respOK, true
 }
 
-func (h *CommandHandler) HandleGet(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleGET(args []*RESPData) ([]byte, bool) {
 	if len(args) < 2 {
 		return nil, false
 	}
-	key := string(args[1].Data)
+	key := args[1].String()
+
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
-	val, ok := h.db.Get(key)
+	val, ok := h.db.GetString(key)
 	if !ok {
 		return respNullString, true
 	}
-	return EncodeToRESP(val)
+	return EncodeToRESP(ConvertBulkStringToRESP(val))
 }
 
-func (h *CommandHandler) HandleRPush(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleRPUSH(args []*RESPData) ([]byte, bool) {
 	if len(args) < 3 {
 		return nil, false
 	}
 
 	// The name of the array for which we want to push
-	key := string(args[1].Data)
+	key := args[1].String()
 
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
-	val, ok := h.db.Get(key)
+
+	// Make sure no other data type has the same key
+	if !h.db.CanSetList(key) {
+		return nil, false
+	}
 
 	// If array doesn't exist, create an empty array belonging to that key
-	if !ok || val.Type != Array {
-		val = &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)}
-		h.db.Set(key, val)
+	val, ok := h.db.GetList(key)
+	if !ok {
+		val = make([]string, 0)
+		h.db.SetList(key, val)
 	}
 
 	// Add all elements to the array
 	for i := 2; i < len(args); i++ {
-		val.NestedRESPData = append(val.NestedRESPData, CloneRESP(args[i]))
+		val = append(val, args[i].String())
 	}
 
 	// If there are clients blocked on a BLPOP, send first elem through the first channel
-	if waitChans, ok := h.db.waiters[key]; ok {
-		popped := val.NestedRESPData[0]
+	if waitChans, ok := h.db.blpopWaiters[key]; ok {
+		popped := val[0]
 		waitChans[0] <- popped // Send the popped element through the channel to the client who called BLPOP first
 		close(waitChans[0])    // Close the channel
 
-		h.db.waiters[key] = h.db.waiters[key][1:] // Remove client off the queue
+		h.db.blpopWaiters[key] = h.db.blpopWaiters[key][1:] // Remove client off the queue
 	}
+
 	// Return length of array
-	newLen := strconv.Itoa(len(val.NestedRESPData))
-	return EncodeToRESP(
-		&RESPData{
-			Type: Integer,
-			Data: []byte(newLen),
-		})
+	return EncodeToRESP(ConvertIntToRESP(len(val)))
 
 }
 
-func (h *CommandHandler) HandleLPush(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleLPUSH(args []*RESPData) ([]byte, bool) {
 	if len(args) < 3 {
 		return nil, false
 	}
 
-	key := string(args[1].Data)
+	// The name of the array for which we want to push
+	key := args[1].String()
+
+	
 
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
 
-	val, ok := h.db.Get(key)
+	// Make sure no other data type has the same key
+	if !h.db.CanSetList(key) {
+		return nil, false
+	}
 
-	// If the key doesn't exist as an array, create a new empty array
-	if !ok || val.Type != Array {
-		val = &RESPData{Type: Array, NestedRESPData: make([]*RESPData, 0)}
-		h.db.Set(key, val)
+	// If array doesn't exist, create an empty array belonging to that key
+	val, ok := h.db.GetList(key)
+	if !ok {
+		val = make([]string, 0)
+		h.db.SetList(key, val)
 	}
 
 	// Create a new bigger array to hold the old + newly appended elements
-	newArr := make([]*RESPData, len(val.NestedRESPData)+len(args)-2)
+	newArr := make([]string, len(val)+len(args)-2)
 	for i := 0; i < len(args)-2; i++ {
-		newArr[i] = CloneRESP(args[len(args)-1-i])
+		newArr[i] = args[len(args)-1-i].String()
 	}
 	for i := len(args) - 2; i < len(newArr); i++ {
-		newArr[i] = CloneRESP(val.NestedRESPData[i-len(args)+2])
+		newArr[i] = val[i-len(args)+2]
 	}
-	val.NestedRESPData = newArr
+	val = newArr
 
 	// If there are clients blocked on a BLPOP, send first elem through the first channel
-	if waitChans, ok := h.db.waiters[key]; ok {
-		popped := val.NestedRESPData[0]
+	if waitChans, ok := h.db.blpopWaiters[key]; ok {
+		popped := val[0]
 		waitChans[0] <- popped // Send the popped element through the channel to the client who called BLPOP first
 		close(waitChans[0])    // Close the channel
 
-		h.db.waiters[key] = h.db.waiters[key][1:] // Remove client off the queue
+		h.db.blpopWaiters[key] = h.db.blpopWaiters[key][1:] // Remove client off the queue
 	}
 
-	newLen := strconv.Itoa(len(val.NestedRESPData))
-	return EncodeToRESP(
-		&RESPData{
-			Type: Integer,
-			Data: []byte(newLen),
-		})
+	return EncodeToRESP(ConvertIntToRESP(len(val)))
 
 }
 
-func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleLRANGE(args []*RESPData) ([]byte, bool) {
 	if len(args) != 4 {
 		return nil, false
 	}
+
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
-	resp, ok := h.db.Get(string(args[1].Data))
-	if !ok || resp.Type != Array {
+
+	// If list doesn't exist, return empty array
+	val, ok := h.db.GetList(string(args[1].Data))
+	if !ok {
 		return respEmptyArr, true
 	}
 
-	arrLen := len(resp.NestedRESPData)
-	start, _ := strconv.Atoi(string(args[2].Data))
+	arrLen := len(val)
+	// Parse start and stop indices, handling negative indices and out-of-bounds cases
+	start, _ := strconv.Atoi(args[2].String())
 	if start < 0 {
 		start = arrLen + start
 		start = max(0, start)
@@ -185,38 +201,38 @@ func (h *CommandHandler) HandleLRange(args []*RESPData) ([]byte, bool) {
 		return respEmptyArr, true
 	}
 
-	return EncodeToRESP(
-		&RESPData{
-			Type:           Array,
-			NestedRESPData: resp.NestedRESPData[start : stop+1],
-		})
+	return EncodeToRESP(convertListToRESP(val[start : stop+1]))
 
 }
 
-func (h *CommandHandler) HandleLlen(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleLLEN(args []*RESPData) ([]byte, bool) {
 	if len(args) != 2 {
 		return nil, false
 	}
-	arrName := string(args[1].Data)
+
+	arrName := args[1].String()
+
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
-	arrResp, ok := h.db.Get(arrName)
-	if !ok || arrResp.Type != Array {
-		return EncodeToRESP(&RESPData{Type: Integer, Data: []byte("0")})
+
+	// If list doesn't exist, return 0
+	arrResp, ok := h.db.GetList(arrName)
+	if !ok  {
+		return EncodeToRESP(ConvertIntToRESP(0))
 	}
 
-	return EncodeToRESP(&RESPData{Type: Integer, Data: []byte(strconv.Itoa(len(arrResp.NestedRESPData)))})
+	// Return length of list
+	return EncodeToRESP(ConvertIntToRESP(len(arrResp)))
 
 }
 
-func (h *CommandHandler) HandleBlpop(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleBLPOP(args []*RESPData) ([]byte, bool) {
 	if len(args) != 3 {
 		return nil, false
 	}
 
 	// Get the name of the array to pop from
-	keyResp := args[1]
-	key := string(keyResp.Data)
+	key := args[1].String()
 
 	// Make sure duration is a non-negative double float
 	duration, err := strconv.ParseFloat(string(args[2].Data), 64)
@@ -225,22 +241,23 @@ func (h *CommandHandler) HandleBlpop(args []*RESPData) ([]byte, bool) {
 	}
 
 	h.db.mu.Lock()
-	data, ok := h.db.data[key]
+
+	data, ok := h.db.listData[key]
 
 	// If the array exists and has elements, pop and return immediately
-	if ok && data.Type == Array && len(data.NestedRESPData) > 0 {
-		poppedVal := data.NestedRESPData[0]
-		data.NestedRESPData = data.NestedRESPData[1:]
+	if ok && len(data) > 0 {
+		poppedVal := data[0]
+		h.db.listData[key] = data[1:]
 		h.db.mu.Unlock()
-		return EncodeToRESP(&RESPData{Type: Array, NestedRESPData: []*RESPData{keyResp, poppedVal}})
+		return EncodeToRESP(convertListToRESP([]string{key, poppedVal}))
 	}
 
 	// Add client to list of blocked clients on this array
-	if _, ok = h.db.waiters[key]; !ok {
-		h.db.waiters[key] = make([]chan *RESPData, 0)
+	if _, ok = h.db.blpopWaiters[key]; !ok {
+		h.db.blpopWaiters[key] = make([]chan string, 0)
 	}
-	c := make(chan *RESPData)
-	h.db.waiters[key] = append(h.db.waiters[key], c)
+	c := make(chan string)
+	h.db.blpopWaiters[key] = append(h.db.blpopWaiters[key], c)
 	h.db.mu.Unlock() // Make sure to remove mutex so other clients can modify DB while this one is blocked
 
 	// If duration is 0, block indefinitely until channel receives value
@@ -248,89 +265,141 @@ func (h *CommandHandler) HandleBlpop(args []*RESPData) ([]byte, bool) {
 		poppedVal := <-c
 		h.db.mu.Lock()
 		defer h.db.mu.Unlock()
-		h.db.data[key].NestedRESPData = h.db.data[key].NestedRESPData[1:] // Remove the popped element from the array
-		return EncodeToRESP(&RESPData{Type: Array, NestedRESPData: []*RESPData{keyResp, poppedVal}})
+		h.db.listData[key] = h.db.listData[key][1:] // Remove the popped element from the array
+		return EncodeToRESP(convertListToRESP([]string{key, poppedVal}))
 	}
 
 	// Otherwise block until channel receives value or timeout occurs
 	select {
+
 	case <-time.After(time.Duration(duration * float64(time.Second))):
 		// Timeout occurred, remove client from waiters list
 		h.db.mu.Lock()
 		defer h.db.mu.Unlock()
 		// Remove channel from waiters list
-		waitChans := h.db.waiters[key]
+		waitChans := h.db.blpopWaiters[key]
 		for i, chanVal := range waitChans {
 			if chanVal == c {
-				h.db.waiters[key] = append(waitChans[:i], waitChans[i+1:]...)
+				h.db.blpopWaiters[key] = append(waitChans[:i], waitChans[i+1:]...)
 				break
 			}
 		}
 		return respNullArr, true
+
 	case poppedVal := <-c:
 		// Successfully received popped value
 		h.db.mu.Lock()
 		defer h.db.mu.Unlock()
-		h.db.data[key].NestedRESPData = h.db.data[key].NestedRESPData[1:] // Remove the popped element from the array
-		return EncodeToRESP(&RESPData{Type: Array, NestedRESPData: []*RESPData{keyResp, poppedVal}})
+		h.db.listData[key] = h.db.listData[key][1:] // Remove the popped element from the array
+		return EncodeToRESP(convertListToRESP([]string{key, poppedVal}))
+
 	}
 
 }
 
-func (h *CommandHandler) HandleLpop(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleLPOP(args []*RESPData) ([]byte, bool) {
 	if len(args) != 2 && len(args) != 3 {
 		return nil, false
 	}
-	arrName := string(args[1].Data)
+	arrName := args[1].String()
+
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
-	arrResp, ok := h.db.Get(arrName)
-	if !ok || arrResp.Type != Array {
+
+	// Return null string if array doesn't exist
+	arrResp, ok := h.db.GetList(arrName)
+	if !ok {
 		return respNullString, true
 	}
+
+	// Parse optional number of elements to remove
 	numToRemove := 1
 	if len(args) == 3 {
-		numToRemove, _ = strconv.Atoi(string(args[2].Data))
-		if numToRemove < 0 {
+		parsedNum, err := strconv.Atoi(args[2].String())
+		if err != nil || parsedNum < 0 {
 			return nil, false
 		}
-		numToRemove = min(numToRemove, len(arrResp.NestedRESPData))
+		numToRemove = min(parsedNum, len(arrResp))
 	}
-	ret := &RESPData{Type: Array, NestedRESPData: make([]*RESPData, numToRemove)}
-	for i := range numToRemove {
-		elem := CloneRESP(arrResp.NestedRESPData[i])
-		ret.NestedRESPData[i] = elem
-	}
-	if numToRemove == len(arrResp.NestedRESPData) {
-		arrResp.NestedRESPData = make([]*RESPData, 0)
+
+	// Populate list of popped elements
+	ret := make([]string, 0)
+	ret = append(ret, arrResp[:numToRemove]...)
+
+	// Update the array in the DB after popping elements
+	if numToRemove == len(arrResp) {
+		h.db.listData[arrName] = make([]string, 0)
 	} else {
-		arrResp.NestedRESPData = arrResp.NestedRESPData[numToRemove:]
+		h.db.listData[arrName] = arrResp[numToRemove:]
 	}
+
+	// Return single element if only one was removed
 	if numToRemove == 1 {
-		return EncodeToRESP(ret.NestedRESPData[0])
+		return EncodeToRESP(ConvertBulkStringToRESP(ret[0]))
 	}
-	return EncodeToRESP(ret)
+	// Return array of removed elements otherwise
+	return EncodeToRESP(convertListToRESP(ret))
 
 }
 
-func (h* CommandHandler) HandleType(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleTYPE(args []*RESPData) ([]byte, bool) {
 	if len(args) != 2 {
 		return nil, false
 	}
-	
+
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
-	resp, ok := h.db.data[string(args[1].Data)]
-	if !ok {
-		return respNoneString, true
+	_, isString := h.db.GetString(args[1].String());
+	if isString {
+		return []byte("+string\r\n"), true
+	}
+	_, isList := h.db.GetList(args[1].String());
+	if isList {
+		return []byte("+list\r\n"), true
 	}
 
-	switch resp.Type {
-	case SimpleString, BulkString:
-		return []byte("+string\r\n"), true
-	default:
-		return respNoneString, true
+	_, isStream := h.db.GetStream(args[1].String());
+	if isStream {
+		return []byte("+stream\r\n"), true
 	}
+
+	return respNoneString, true
+}
+
+func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
+	if len(args) < 5 || len(args) % 2 == 0 {
+		return nil, false
+	}
+
+	sname := args[1].String()
+	id := args[2].String()
+
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+
+	// Check if stream doesn't already exists
+	stream, ok := h.db.GetStream(sname)
+
+	// Make sure we can make a stream with the specified name
+	if !ok && !h.db.CanSetStream(sname) {
+		return nil, false
+	} else if !ok {
+		stream = make([]*StreamEntry, 0)
+	}
+
+	// Populate the stream entry to be added to the stream
+	entry := &StreamEntry{id: id, values: make(map[string]string)}
+	for i := 4; i < len(args); i += 2 {
+		key := args[i].String()
+		val := args[i+1].String()
+		entry.values[key] = val
+	}
+
+	// Update stream in DB
+	h.db.streamData[sname] = append(stream, entry)
+
+	// Return the ID of the stream that was just added
+	return EncodeToRESP(ConvertBulkStringToRESP(id))
 }
 
 func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
@@ -340,7 +409,7 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return nil, false
 	}
 
-	request := respData.NestedRESPData
+	request := respData.ListRESPData
 	if len(request) == 0 {
 		return nil, false
 	}
@@ -348,27 +417,27 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 	command := string(request[0].Data)
 	switch strings.ToLower(command) {
 	case "echo":
-		return h.HandleEcho(request)
+		return h.HandleECHO(request)
 	case "ping":
-		return h.HandlePing()
+		return h.HandlePING()
 	case "set":
-		return h.HandleSet(request)
+		return h.HandleSET(request)
 	case "get":
-		return h.HandleGet(request)
+		return h.HandleGET(request)
 	case "rpush":
-		return h.HandleRPush(request)
+		return h.HandleRPUSH(request)
 	case "lpush":
-		return h.HandleLPush(request)
+		return h.HandleLPUSH(request)
 	case "lrange":
-		return h.HandleLRange(request)
+		return h.HandleLRANGE(request)
 	case "llen":
-		return h.HandleLlen(request)
+		return h.HandleLLEN(request)
 	case "lpop":
-		return h.HandleLpop(request)
+		return h.HandleLPOP(request)
 	case "blpop":
-		return h.HandleBlpop(request)
+		return h.HandleBLPOP(request)
 	case "type":
-		return h.HandleType(request)
+		return h.HandleTYPE(request)
 	default:
 		return nil, false
 	}
