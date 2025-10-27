@@ -494,7 +494,7 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) ([]byte, bool) {
 	
 	}
 
-	
+
 	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
 	
 	// If first ID is greater than second, return empty list right away
@@ -514,7 +514,7 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) ([]byte, bool) {
 
 	i := 0
 	// Find first stream element in range
-	for ; i < len(stream) && CompareStreamIDs(stream[i].id, id1) != 0; i++ {
+	for ; i < len(stream) && CompareStreamIDs(stream[i].id, id1) == -1; i++ {
 		
 	}
 
