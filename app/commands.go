@@ -429,21 +429,28 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 	stream = append(stream, entry)
 	h.db.SetStream(sname, stream)
 
-	// Notify all relevant XREAD waiters of newly appended entries
-
-
+	// Find all relevant XREAD waiters by storing in notifyChans
 	var notifyChans []chan []*StreamEntry
-	for waiterId, chans := range h.db.xreadIdWaiters[sname] {
+	for waiterId, ch := range h.db.xreadIdWaiters[sname] {
 		if CompareStreamIDs(id, waiterId) == 1 {
-			notifyChans = append(notifyChans, chans...)
+			notifyChans = append(notifyChans, ch...)
 		}
+
 	}
 
 	notifyChans = append(notifyChans, h.db.xreadAllWaiters[sname]...)
 
 	h.db.mu.Unlock()
+
+	// For each rlevant reader, send all relevant entries
 	for _, ch := range notifyChans {
-		select { case ch <- stream: default: }
+		data := make([]*StreamEntry, 0)
+		for _, entry := range stream {
+			if CompareStreamIDs(entry.id, id) == 1 {
+				data = append(data, entry)
+			}
+		}
+		select { case ch <- data: default: }
 	}
 	h.db.mu.Lock()
 

@@ -19,7 +19,9 @@ type DB struct {
 
 	// Streams
 	streamData map[string]([]*StreamEntry)
+	// Format: stream name -> ID -> list of channels waiting for new entries after ID
 	xreadIdWaiters map[string](map[string]([]chan []*StreamEntry))
+	// Format: stream name -> list of channels waiting for any new entries
 	xreadAllWaiters map[string]([]chan []*StreamEntry)
 
 	// Mutex for concurrency
