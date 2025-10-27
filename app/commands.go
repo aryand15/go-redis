@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"math"
 )
 
 // Common RESP responses
@@ -455,6 +456,113 @@ func generateNewStreamID(prevId string) string {
 	return fmt.Sprintf("%d-%d", currMillis, seqNum)
 }
 
+func (h *CommandHandler) HandleXRANGE(args []*RESPData) ([]byte, bool) {
+	if len(args) != 4 {
+		return nil, false
+	}
+
+	sname := args[1].String()
+	id1 := args[2].String()
+	id2 := args[3].String()
+
+	// Validate IDs
+	id1Parts := strings.Split(id1, "-")
+	id2Parts := strings.Split(id2, "-")
+	if len(id1Parts) > 2 || len(id2Parts) > 2 {
+		return nil, false
+	}
+
+	millis1, err1 := strconv.Atoi(id1Parts[0])
+	millis2, err2 := strconv.Atoi(id2Parts[0])
+	if err1 != nil || err2 != nil{
+		return nil, false
+	}
+
+	seqNum1, seqNum2 := 0, math.MaxInt
+	if len(id1Parts) == 2 {
+		seqNum1, err1 = strconv.Atoi(id1Parts[1])
+	}
+	if len(id2Parts) == 2 {
+		seqNum2, err2 = strconv.Atoi(id2Parts[1])
+	}
+
+	if err1 != nil || err2 != nil{
+		return nil, false
+	}
+
+	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+	id1 = fmt.Sprintf("%d-%d", millis1, seqNum1)
+	id2 = fmt.Sprintf("%d-%d", millis2, seqNum2)
+
+	// If first ID is greater than second, return empty list right away
+	if CompareStreamIDs(id1, id2) == 1 {
+		return EncodeToRESP(ret)
+	}
+
+
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+
+	// Check if stream exists
+	stream, ok := h.db.GetStream(sname)
+	if !ok {
+		return nil, false
+	}
+
+	i := 0
+	// Find first stream element in range
+	for ; i < len(stream) && CompareStreamIDs(stream[i].id, id1) == 1; i++ {
+		
+	}
+
+	// Add elements that are in range
+	for ; i < len(stream) && CompareStreamIDs(id2, stream[i].id) == 1; i++ {
+		respListEntry := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 2)}
+
+		// Add ID as first element of list
+		respStreamId := &RESPData{Type: BulkString, Data: []byte(stream[i].id)}
+		respListEntry.ListRESPData[0] = respStreamId
+
+		// Add list of keys & values as second element of list
+		respKVList := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+		for k := range stream[i].values {
+			respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(k))
+			respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(stream[i].values[k]))
+		}
+		respListEntry.ListRESPData[1] = respKVList
+
+		// Append entry to return list
+		ret.ListRESPData = append(ret.ListRESPData, respListEntry)
+	}
+
+	return EncodeToRESP(ret)
+
+}
+
+func CompareStreamIDs(idA string, idB string) (int) {
+	idAParts := strings.Split(idA, "-")
+	idBParts := strings.Split(idB, "-")
+
+	millisA, _ := strconv.Atoi(idAParts[0])
+	millisB, _ := strconv.Atoi(idBParts[0])
+
+	if millisA < millisB {
+		return -1
+	} else if millisA > millisB {
+		return 1
+	} else {
+		seqNumA, _ := strconv.Atoi(idAParts[1])
+		seqNumB, _ := strconv.Atoi(idBParts[1])
+		if seqNumA < seqNumB {
+			return -1
+		} else if seqNumA > seqNumB {
+			return 1
+		} else {
+			return 0
+		}
+	}
+}
+
 func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 	_, respData, success := DecodeFromRESP(message)
 	if !success || respData.Type != Array {
@@ -493,6 +601,8 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return h.HandleTYPE(request)
 	case "xadd":
 		return h.HandleXADD(request)
+	case "xrange":
+		return h.HandleXRANGE(request)
 	default:
 		return nil, false
 	}
