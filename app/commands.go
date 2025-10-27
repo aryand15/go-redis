@@ -755,6 +755,10 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 		ret.ListRESPData = append(ret.ListRESPData, streamResults)
 	}
 
+	if len(ret.ListRESPData) == 0 {
+		return respNullArr, true
+	}
+
 	return EncodeToRESP(ret)
 }
 
