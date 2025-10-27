@@ -660,7 +660,7 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 			// Otherwise, create a channel to wait on which XADD will notify when new entries are added
 			receiver := make(chan *StreamEntry)
 
-			h.db.mu.Lock()
+			
 
 			// If id = "$", add to list of channels under stream key of xReadAllWaiters
 			if id == "$" {
@@ -709,7 +709,6 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 				}()
 			}
 
-			h.db.mu.Unlock()
 			// If duration = 0, block indefinitely
 			if blockDurationMillis == 0 && blocking {
 				entry := <-receiver
@@ -736,7 +735,7 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 	}
 	
 
-	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+	ret := &RESPData{Type: Array}
 	for i := 0; i < numStreams; i++ {
 		waitChanRes := <- results
 		if len(waitChanRes.results) == 0 {
@@ -751,7 +750,10 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 			streamResultIds.ListRESPData = append(streamResultIds.ListRESPData, res.RESPData())
 		}
 		streamResults.ListRESPData[1] = streamResultIds
-
+		
+		if ret.ListRESPData == nil {
+			ret.ListRESPData = make([]*RESPData, 0)
+		}
 		ret.ListRESPData = append(ret.ListRESPData, streamResults)
 	}
 

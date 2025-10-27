@@ -210,6 +210,9 @@ func EncodeToRESP(r *RESPData) (b []byte, success bool) {
 		s := "$" + strconv.Itoa(strlen) + "\r\n" + string(r.Data) + "\r\n"
 		return []byte(s), true
 	case Array:
+		if r.ListRESPData == nil {
+			return []byte("*-1\r\n"), true
+		}
 		arrlen := len(r.ListRESPData)
 		s := "*" + strconv.Itoa(arrlen) + "\r\n"
 		for _, rr := range r.ListRESPData {
