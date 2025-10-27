@@ -642,7 +642,7 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 
 			// If this isn't a blocking call, immediately send the relevant stream entries
 			// If this is a blocking call and the stream isn't empty and contains relevant elements, return with the relevant stream entries
-			if !blocking || (blocking && len(stream) > 0){
+			if id != "$" && (!blocking || (blocking && len(stream) > 0)){
 				i := 0
 				for ; i < len(stream) && CompareStreamIDs(stream[i].id, id) != 1; i++ {
 					
