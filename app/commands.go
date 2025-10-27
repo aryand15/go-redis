@@ -542,6 +542,65 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) ([]byte, bool) {
 
 }
 
+func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
+	if len(args) != 4 {
+		return nil, false
+	}
+
+	sname := args[2].String()
+	id := args[3].String()
+
+	// Validate ID
+	idParts := strings.Split(id, "-")
+	if len(idParts) != 2 {
+		return nil, false
+	}
+	if _, err := strconv.Atoi(idParts[0]); err != nil {
+		return nil, false
+	}
+	if _, err := strconv.Atoi(idParts[1]); err != nil {
+		return nil, false
+	}
+
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+
+	// Check if stream exists
+	stream, ok := h.db.GetStream(sname)
+	if !ok {
+		return nil, false
+	}
+
+
+	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+
+	// Add elements that are in range
+	for i := range stream {
+		if CompareStreamIDs(stream[i].id, id) != 1 {
+			continue
+		}
+
+		respListEntry := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 2)}
+
+		// Add ID as first element of list
+		respStreamId := &RESPData{Type: BulkString, Data: []byte(stream[i].id)}
+		respListEntry.ListRESPData[0] = respStreamId
+
+		// Add list of keys & values as second element of list
+		respKVList := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+		for k := range stream[i].values {
+			respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(k))
+			respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(stream[i].values[k]))
+		}
+		respListEntry.ListRESPData[1] = respKVList
+
+		// Append entry to return list
+		ret.ListRESPData = append(ret.ListRESPData, respListEntry)
+	}
+
+	return EncodeToRESP(ret)
+}
+
 func CompareStreamIDs(idA string, idB string) (int) {
 	idAParts := strings.Split(idA, "-")
 	idBParts := strings.Split(idB, "-")
@@ -606,6 +665,8 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return h.HandleXADD(request)
 	case "xrange":
 		return h.HandleXRANGE(request)
+	case "xread":
+		return h.HandleXREAD(request)
 	default:
 		return nil, false
 	}
