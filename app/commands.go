@@ -727,6 +727,7 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 			select {
 				// If timeout is reached: return nil
 				case <-time.After(time.Duration(blockDurationMillis * float64(time.Millisecond))):
+					fmt.Println("Timeout reached")
 					results <- res
 					return
 
