@@ -583,11 +583,16 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 	lastStreamIndex := firstStreamIndex + numStreams - 1
 	firstIdIndex := lastStreamIndex + 1
 
+	// Create map of stream names to order for sorting purposes later on
+	snameToIdx := make(map[string]int)
+
 
 
 	// Validate each ID
 	for i := firstIdIndex; i < lastIdIndex+1; i++ {
 		id := args[i].String()
+
+		snameToIdx[args[i - numStreams].String()] = i - firstStreamIndex
 
 		// ID can be $
 		if id == "$" {
@@ -747,14 +752,19 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 		streamResults.ListRESPData[1] = streamResultIds
 		
 		if ret.ListRESPData == nil {
-			ret.ListRESPData = make([]*RESPData, 0)
+			ret.ListRESPData = make([]*RESPData, numStreams)
 		}
-		ret.ListRESPData = append(ret.ListRESPData, streamResults)
+
+		// Make sure to sort ret by stream names
+
+
+		ret.ListRESPData[snameToIdx[waitChanRes.streamKey]] = streamResults
 	}
 
 	if len(ret.ListRESPData) == 0 {
 		return respNullArr, true
 	}
+	
 
 	return EncodeToRESP(ret)
 }
