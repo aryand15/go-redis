@@ -592,7 +592,7 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 	for i := firstIdIndex; i < lastIdIndex+1; i++ {
 		id := args[i].String()
 
-		snameToIdx[args[i - numStreams].String()] = i - firstStreamIndex
+		snameToIdx[args[i - numStreams].String()] = i - firstIdIndex
 
 		// ID can be $
 		if id == "$" {
