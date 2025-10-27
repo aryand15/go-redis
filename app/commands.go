@@ -426,7 +426,27 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 	}
 
 	// Update stream in DB
-	h.db.streamData[sname] = append(stream, entry)
+	stream = append(stream, entry)
+	h.db.SetStream(sname, stream)
+
+	// Notify all relevant XREAD waiters of newly appended entries
+	if snameWaiters, snameOk := h.db.xreadIdWaiters[sname]; snameOk {
+		for waiterId := range snameWaiters {
+			if CompareStreamIDs(waiterId, id) == 1 {
+				for _, ch := range h.db.xreadIdWaiters[sname][waiterId] {
+					ch <- stream
+				}
+			}
+		}
+	}
+
+	if _, allOk := h.db.xreadAllWaiters[sname]; allOk {
+		for _, ch := range h.db.xreadAllWaiters[sname] {
+			ch <- stream
+		}
+	}
+
+
 
 	// Return the ID of the stream that was just added
 	return EncodeToRESP(ConvertBulkStringToRESP(id))
@@ -543,14 +563,44 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) ([]byte, bool) {
 }
 
 func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
-	if len(args) < 4 || len(args) % 2 == 1 {
+	if len(args) < 4 || len(args) % 2 == 1 || (strings.ToLower(args[1].String()) != "streams" && strings.ToLower(args[1].String()) != "block") {
+		return nil, false
+	} else if strings.ToLower(args[1].String()) == "block" && strings.ToLower(args[3].String()) != "streams" {
 		return nil, false
 	}
 
-	for i := len(args) - 1; i > (1 + len(args)) / 2; i-- {
-		// Validate each ID
+	blocking := false
+	blockDurationMillis := 0.0
+	if strings.ToLower(args[1].String()) == "block" {
+		blocking = true
+		converted, err := strconv.ParseFloat(args[2].String(), 64)
+		if err != nil || converted < 0 {
+			return nil, false
+		}
+		blockDurationMillis = converted
+	}
+
+	firstStreamIndex := 2
+	if blocking {
+		firstStreamIndex = 4
+	}
+	lastIdIndex := len(args) - 1
+	numStreams := (lastIdIndex - firstStreamIndex + 1) / 2
+	lastStreamIndex := firstStreamIndex + numStreams - 1
+	firstIdIndex := lastStreamIndex + 1
+
+
+
+	// Validate each ID
+	for i := firstIdIndex; i < lastIdIndex+1; i++ {
 		id := args[i].String()
 
+		// ID can be $
+		if id == "$" {
+			continue
+		}
+
+		// Otherwise make sure it follows the format int-int
 		idParts := strings.Split(id, "-")
 		if len(idParts) != 2 {
 			return nil, false
@@ -569,57 +619,133 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 
 
 	// For each stream, check if it exists
-	for i := 2; i <= (1 + len(args)) / 2; i++ {
+	for i := firstStreamIndex; i <= lastStreamIndex+1; i++ {
 		if _, ok := h.db.GetStream(args[i].String()); !ok {
 			return nil, false
 		}
 	}
 
-	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+	type WaitChanResult struct {
+		streamKey string;
+		results []*StreamEntry
+	}
 
-	// For each stream:
-	for i := 2; i <= (1 + len(args)) / 2; i++ {
-		// Get the stream name and ID to compare against
+	results := make(chan *WaitChanResult, numStreams)
+
+	for i := firstStreamIndex; i <= lastStreamIndex; i++ {
 		sname := args[i].String()
-		id := args[i + (len(args) - 2) / 2].String()
+		id := args[i + numStreams].String()
 		stream, _ := h.db.GetStream(sname)
 
-		// Populate the RESP data for this stream
-		streamData := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 2)}
-		streamData.ListRESPData[0] = ConvertBulkStringToRESP(sname)
+		go func() {
+			res := &WaitChanResult{streamKey: sname, results: make([]*StreamEntry, 0)}
 
-		streamEntries := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+			// If this isn't a blocking call, immediately send the relevant stream entries
+			// If this is a blocking call and the stream isn't empty and contains relevant elements, return with the relevant stream entries
+			if !blocking || (blocking && len(stream) > 0){
+				for i := len(stream)-1; i > 0 && CompareStreamIDs(stream[i].id, id) != 1; i-- {
+					res.results = append(res.results, stream[i])
+				}
+				if !blocking || len(results) > 0 {
+					results <- res
+					return
+				}
+				
+			}
+			// Otherwise, create a channel of type []*StreamEntry
+			receiver := make(chan []*StreamEntry)
 
-		// Add elements that are in range
-		for i := range stream {
-			if CompareStreamIDs(stream[i].id, id) != 1 {
-				continue
+			h.db.mu.Lock()
+
+			// If id = "$", add to list of channels under stream key of xReadAllWaiters
+			if id == "$" {
+				allWaiters, ok := h.db.xreadAllWaiters[sname]
+				if !ok {
+					h.db.xreadAllWaiters[sname] = make([]chan []*StreamEntry, 0)
+				}
+				
+				h.db.xreadAllWaiters[sname] = append(h.db.xreadAllWaiters[sname], receiver)
+				// Make sure to remove channel from waiters list once done
+				defer func() {
+					h.db.mu.Lock()
+					defer h.db.mu.Unlock()
+					for i, ch := range h.db.xreadAllWaiters[sname] {
+						if ch == receiver {
+							h.db.xreadAllWaiters[sname] = append(allWaiters[:i], allWaiters[i+1:]...)
+							break
+						}
+					}
+				}()
+			
+			// Otherwise add to list of channels under id key under stream key of xReadIdWaiters
+			} else {
+				streamWaiters, ok := h.db.xreadIdWaiters[sname]
+				if !ok {
+					h.db.xreadIdWaiters[sname] = make(map[string]([]chan []*StreamEntry))
+				}
+				streamIdWaiters, ok := streamWaiters[id]
+				if !ok {
+					h.db.xreadIdWaiters[sname][id] = make([]chan []*StreamEntry, 0)
+				}
+
+				// Make sure to remove channel from waiters list once done
+				h.db.xreadIdWaiters[sname][id] = append(h.db.xreadIdWaiters[sname][id], receiver)
+				defer func() {
+					h.db.mu.Lock()
+					defer h.db.mu.Unlock()
+					for i, ch := range h.db.xreadIdWaiters[sname][id] {
+						if ch == receiver {
+							h.db.xreadIdWaiters[sname][id] = append(streamIdWaiters[:i], streamIdWaiters[i+1:]...)
+							break
+						}
+					}
+				}()
 			}
 
-			streamEntry := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 2)}
-
-			// Add ID as first element of list
-			respStreamId := &RESPData{Type: BulkString, Data: []byte(stream[i].id)}
-			streamEntry.ListRESPData[0] = respStreamId
-
-			// Add list of keys & values as second element of list
-			respKVList := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
-			for k := range stream[i].values {
-				respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(k))
-				respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(stream[i].values[k]))
+			h.db.mu.Unlock()
+			// If duration = 0, block indefinitely
+			if blockDurationMillis == 0 {
+				xaddResults := <-receiver
+				res.results = xaddResults
+				results <- res
+				return
 			}
-			streamEntry.ListRESPData[1] = respKVList
+			// Otherwise do a select statement, blocking until timeout is reached
+			select {
+				// If timeout is reached: return nil
+				case <-time.After(time.Duration(blockDurationMillis * float64(time.Millisecond))):
+					results <- res
+					return
 
-			// Append entry to return list
-			streamEntries.ListRESPData = append(streamEntries.ListRESPData, streamEntry)
-		}
-
-		streamData.ListRESPData[1] = streamEntries
-		ret.ListRESPData = append(ret.ListRESPData, streamData)
-
+				// Otherwise: send the relevant stream entries
+				case xaddResults := <-receiver:
+					res.results = xaddResults
+					results <- res
+					return
+			}
+			
+		}()
 	}
 	
-	
+
+	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+	for i := 0; i < numStreams; i++ {
+		waitChanRes := <- results
+		if len(waitChanRes.results) == 0 {
+			continue
+		}
+		streamResults := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 2)}
+		streamResults.ListRESPData[0] = ConvertBulkStringToRESP(waitChanRes.streamKey)
+		streamResultIds := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)} 
+		
+
+		for _, res := range waitChanRes.results {
+			streamResultIds.ListRESPData = append(streamResultIds.ListRESPData, res.RESPData())
+		}
+		streamResults.ListRESPData[1] = streamResultIds
+
+		ret.ListRESPData = append(ret.ListRESPData, streamResults)
+	}
 
 	return EncodeToRESP(ret)
 }

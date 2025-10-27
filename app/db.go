@@ -19,9 +19,11 @@ type DB struct {
 
 	// Streams
 	streamData map[string]([]*StreamEntry)
+	xreadIdWaiters map[string](map[string]([]chan []*StreamEntry))
+	xreadAllWaiters map[string]([]chan []*StreamEntry)
 
 	// Mutex for concurrency
-	mu sync.Mutex 
+	mu sync.Mutex
 }
 
 type StreamEntry struct { 
@@ -39,6 +41,23 @@ func (s *StreamEntry) GetSeqNum() int {
 	return n
 }
 
+func (s *StreamEntry) RESPData() *RESPData {
+	streamEntry := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 2)}
+
+	// Add ID as first element of list
+	respStreamId := &RESPData{Type: BulkString, Data: []byte(s.id)}
+	streamEntry.ListRESPData[0] = respStreamId
+
+	// Add list of keys & values as second element of list
+	respKVList := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+	for k := range s.values {
+		respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(k))
+		respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(s.values[k]))
+	}
+	streamEntry.ListRESPData[1] = respKVList
+
+	return streamEntry
+}
 
 
 func (db *DB) SetString(key string, val string) {
@@ -139,5 +158,7 @@ func NewDB() *DB {
 		listData: make(map[string]([]string)),
 		blpopWaiters: make(map[string]([]chan string)),
 		streamData: make(map[string]([]*StreamEntry)),
+		xreadIdWaiters: make(map[string](map[string]([]chan []*StreamEntry))),
+		xreadAllWaiters: make(map[string]([]chan []*StreamEntry)),
 	}
 }
