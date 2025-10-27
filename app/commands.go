@@ -573,6 +573,7 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 
 
 	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+	ret.ListRESPData = append(ret.ListRESPData, ConvertBulkStringToRESP(sname))
 
 	// Add elements that are in range
 	for i := range stream {
