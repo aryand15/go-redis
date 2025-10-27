@@ -446,7 +446,10 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 	for _, ch := range notifyChans {
 		data := make([]*StreamEntry, 0)
 		for _, entry := range stream {
+			// debugging
+			fmt.Println("Comparing ", entry.id, " and ", id)
 			if CompareStreamIDs(entry.id, id) == 1 {
+				fmt.Println("Appending entry ", entry.id)
 				data = append(data, entry)
 			}
 		}
