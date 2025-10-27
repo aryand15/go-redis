@@ -381,12 +381,6 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 
 	id := args[2].String()
 
-	//debugging
-	if (len(stream) > 0) {
-		fmt.Println("Previous stream top item ID: ", stream[len(stream)-1].id)
-		fmt.Println("ID to be added: ", id)
-	}
-
 	// Validate ID
 
 	// Cannot be 0-0
@@ -464,36 +458,45 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) ([]byte, bool) {
 	sname := args[1].String()
 	id1 := args[2].String()
 	id2 := args[3].String()
+	
 
 	// Validate IDs
-	id1Parts := strings.Split(id1, "-")
-	id2Parts := strings.Split(id2, "-")
-	if len(id1Parts) > 2 || len(id2Parts) > 2 {
-		return nil, false
+	if id1 == "-" {
+		id1 = "0-0"
+	} else if id2 == "+" {
+		id2 = fmt.Sprintf("%d-%d", math.MaxInt, math.MaxInt)
+	} else {
+		id1Parts := strings.Split(id1, "-")
+		id2Parts := strings.Split(id2, "-")
+		if len(id1Parts) > 2 || len(id2Parts) > 2 {
+			return nil, false
+		}
+
+		millis1, err1 := strconv.Atoi(id1Parts[0])
+		millis2, err2 := strconv.Atoi(id2Parts[0])
+		if err1 != nil || err2 != nil {
+			return nil, false
+		}
+
+		seqNum1, seqNum2 := 0, math.MaxInt
+		if len(id1Parts) == 2 {
+			seqNum1, err1 = strconv.Atoi(id1Parts[1])
+		}
+		if len(id2Parts) == 2 {
+			seqNum2, err2 = strconv.Atoi(id2Parts[1])
+		}
+
+		if err1 != nil || err2 != nil{
+			return nil, false
+		}
+		id1 = fmt.Sprintf("%d-%d", millis1, seqNum1)
+		id2 = fmt.Sprintf("%d-%d", millis2, seqNum2)
+	
 	}
 
-	millis1, err1 := strconv.Atoi(id1Parts[0])
-	millis2, err2 := strconv.Atoi(id2Parts[0])
-	if err1 != nil || err2 != nil{
-		return nil, false
-	}
-
-	seqNum1, seqNum2 := 0, math.MaxInt
-	if len(id1Parts) == 2 {
-		seqNum1, err1 = strconv.Atoi(id1Parts[1])
-	}
-	if len(id2Parts) == 2 {
-		seqNum2, err2 = strconv.Atoi(id2Parts[1])
-	}
-
-	if err1 != nil || err2 != nil{
-		return nil, false
-	}
-
+	
 	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
-	id1 = fmt.Sprintf("%d-%d", millis1, seqNum1)
-	id2 = fmt.Sprintf("%d-%d", millis2, seqNum2)
-
+	
 	// If first ID is greater than second, return empty list right away
 	if CompareStreamIDs(id1, id2) == 1 {
 		return EncodeToRESP(ret)
