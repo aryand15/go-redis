@@ -439,7 +439,10 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 				go func() { select { case ch <- entry: default: } }()
 			}
 		}
-		
+	}
+
+	for _, ch := range h.db.xreadAllWaiters[sname] {
+		go func() { select { case ch <- entry: default: } }()
 	}
 
 	// Return the ID of the stream that was just added
