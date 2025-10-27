@@ -630,13 +630,15 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 
 	results := make(chan *WaitChanResult, numStreams)
 
-	for i := firstStreamIndex; i <= lastStreamIndex; i++ {
-		sname := args[i].String()
-		id := args[i + numStreams].String()
+	for idx := firstStreamIndex; idx <= lastStreamIndex; idx++ {
+		sname := args[idx].String()
+		id := args[idx + numStreams].String()
 		stream, _ := h.db.GetStream(sname)
 
 		h.db.mu.Unlock()
 		go func() {
+			//debugging
+			fmt.Println("Am i even in the function that handles multiple streams")
 			res := &WaitChanResult{streamKey: sname, results: make([]*StreamEntry, 0)}
 
 			// If this isn't a blocking call, immediately send the relevant stream entries
@@ -647,12 +649,12 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 					
 				}
 				if !blocking || i == len(stream) {
+					res.results = append(res.results, stream[i:]...)
 					results <- res
 					return
 				}
-				res.results = append(res.results, stream[i:]...)
-			
 			}
+			
 			// Otherwise, create a channel to wait on which XADD will notify when new entries are added
 			receiver := make(chan bool)
 
