@@ -606,17 +606,6 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 			return nil, false
 		}
 	}
-	
-
-	h.db.mu.Lock()
-
-
-	// For each stream, check if it exists
-	for i := firstStreamIndex; i <= lastStreamIndex; i++ {
-		if _, ok := h.db.GetStream(args[i].String()); !ok {
-			return nil, false
-		}
-	}
 
 	type WaitChanResult struct {
 		streamKey string;
@@ -631,11 +620,16 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 	results := make(chan *WaitChanResult, numStreams)
 
 	for idx := firstStreamIndex; idx <= lastStreamIndex; idx++ {
+		// Lock DB while checking if stream exists
+		h.db.mu.Lock()
+		// For each stream, check if it exists
 		sname := args[idx].String()
+		stream, ok := h.db.GetStream(sname)
+		if !ok {
+			return nil, false
+		}
 		id := args[idx + numStreams].String()
-		stream, _ := h.db.GetStream(sname)
 
-		h.db.mu.Unlock()
 		go func() {
 			//debugging
 			fmt.Println("Am i even in the function that handles multiple streams")
@@ -732,6 +726,7 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 			}
 			
 		}()
+		h.db.mu.Unlock()
 	}
 	
 
