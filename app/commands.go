@@ -543,61 +543,83 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) ([]byte, bool) {
 }
 
 func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
-	if len(args) != 4 {
+	if len(args) < 4 || len(args) % 2 == 1 {
 		return nil, false
 	}
 
-	sname := args[2].String()
-	id := args[3].String()
+	for i := len(args) - 1; i > (1 + len(args)) / 2; i-- {
+		// Validate each ID
+		id := args[i].String()
 
-	// Validate ID
-	idParts := strings.Split(id, "-")
-	if len(idParts) != 2 {
-		return nil, false
+		idParts := strings.Split(id, "-")
+		if len(idParts) != 2 {
+			return nil, false
+		}
+		if _, err := strconv.Atoi(idParts[0]); err != nil {
+			return nil, false
+		}
+		if _, err := strconv.Atoi(idParts[1]); err != nil {
+			return nil, false
+		}
 	}
-	if _, err := strconv.Atoi(idParts[0]); err != nil {
-		return nil, false
-	}
-	if _, err := strconv.Atoi(idParts[1]); err != nil {
-		return nil, false
-	}
+	
 
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
 
-	// Check if stream exists
-	stream, ok := h.db.GetStream(sname)
-	if !ok {
-		return nil, false
-	}
 
+	// For each stream, check if it exists
+	for i := 2; i <= (1 + len(args)) / 2; i++ {
+		if _, ok := h.db.GetStream(args[i].String()); !ok {
+			return nil, false
+		}
+	}
 
 	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
-	ret.ListRESPData = append(ret.ListRESPData, ConvertBulkStringToRESP(sname))
 
-	// Add elements that are in range
-	for i := range stream {
-		if CompareStreamIDs(stream[i].id, id) != 1 {
-			continue
+	// For each stream:
+	for i := 2; i <= (1 + len(args)) / 2; i++ {
+		// Get the stream name and ID to compare against
+		sname := args[i].String()
+		id := args[i + (len(args) - 2) / 2].String()
+		stream, _ := h.db.GetStream(sname)
+
+		// Populate the RESP data for this stream
+		streamData := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 2)}
+		streamData.ListRESPData[0] = ConvertBulkStringToRESP(sname)
+
+		streamEntries := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+
+		// Add elements that are in range
+		for i := range stream {
+			if CompareStreamIDs(stream[i].id, id) != 1 {
+				continue
+			}
+
+			streamEntry := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 2)}
+
+			// Add ID as first element of list
+			respStreamId := &RESPData{Type: BulkString, Data: []byte(stream[i].id)}
+			streamEntry.ListRESPData[0] = respStreamId
+
+			// Add list of keys & values as second element of list
+			respKVList := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+			for k := range stream[i].values {
+				respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(k))
+				respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(stream[i].values[k]))
+			}
+			streamEntry.ListRESPData[1] = respKVList
+
+			// Append entry to return list
+			streamEntries.ListRESPData = append(streamEntries.ListRESPData, streamEntry)
 		}
 
-		respListEntry := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 2)}
+		streamData.ListRESPData[1] = streamEntries
+		ret.ListRESPData = append(ret.ListRESPData, streamData)
 
-		// Add ID as first element of list
-		respStreamId := &RESPData{Type: BulkString, Data: []byte(stream[i].id)}
-		respListEntry.ListRESPData[0] = respStreamId
-
-		// Add list of keys & values as second element of list
-		respKVList := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
-		for k := range stream[i].values {
-			respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(k))
-			respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(stream[i].values[k]))
-		}
-		respListEntry.ListRESPData[1] = respKVList
-
-		// Append entry to return list
-		ret.ListRESPData = append(ret.ListRESPData, respListEntry)
 	}
+	
+	
 
 	return EncodeToRESP(ret)
 }
