@@ -429,33 +429,18 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 	stream = append(stream, entry)
 	h.db.SetStream(sname, stream)
 
-	// Find all relevant XREAD waiters by storing in notifyChans
-	var notifyChans []chan []*StreamEntry
-	for waiterId, ch := range h.db.xreadIdWaiters[sname] {
-		if CompareStreamIDs(id, waiterId) == 1 {
-			notifyChans = append(notifyChans, ch...)
-		}
 
-	}
-
-	notifyChans = append(notifyChans, h.db.xreadAllWaiters[sname]...)
-
-	h.db.mu.Unlock()
-
-	// For each rlevant reader, send all relevant entries
-	for _, ch := range notifyChans {
-		data := make([]*StreamEntry, 0)
-		for _, entry := range stream {
-			// debugging
-			fmt.Println("Comparing ", entry.id, " and ", id)
-			if CompareStreamIDs(entry.id, id) == 1 {
-				fmt.Println("Appending entry ", entry.id)
-				data = append(data, entry)
+	// Find and wake up all relevant XREAD waiters
+	for waiterId, chs := range h.db.xreadIdWaiters[sname] {
+		go func() {
+			if CompareStreamIDs(id, waiterId) == 1 {
+				for _, ch := range chs {
+					go func() { select { case ch <- true: default: } }()
+				}
 			}
-		}
-		select { case ch <- data: default: }
+		}()
+		
 	}
-	h.db.mu.Lock()
 
 	// Return the ID of the stream that was just added
 	return EncodeToRESP(ConvertBulkStringToRESP(id))
@@ -657,17 +642,19 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 			// If this isn't a blocking call, immediately send the relevant stream entries
 			// If this is a blocking call and the stream isn't empty and contains relevant elements, return with the relevant stream entries
 			if !blocking || (blocking && len(stream) > 0){
-				for i := len(stream)-1; i >= 0 && CompareStreamIDs(stream[i].id, id) == 1; i-- {
-					res.results = append(res.results, stream[i])
+				i := 0
+				for ; i < len(stream) && CompareStreamIDs(stream[i].id, id) != 1; i++ {
+					
 				}
-				if !blocking || len(results) > 0 {
+				if !blocking || i == len(stream) {
 					results <- res
 					return
 				}
-				
+				res.results = append(res.results, stream[i:]...)
+			
 			}
-			// Otherwise, create a channel of type []*StreamEntry
-			receiver := make(chan []*StreamEntry)
+			// Otherwise, create a channel to wait on which XADD will notify when new entries are added
+			receiver := make(chan bool)
 
 			h.db.mu.Lock()
 
@@ -675,7 +662,7 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 			if id == "$" {
 				_, ok := h.db.xreadAllWaiters[sname]
 				if !ok {
-					h.db.xreadAllWaiters[sname] = make([]chan []*StreamEntry, 0)
+					h.db.xreadAllWaiters[sname] = make([]chan bool, 0)
 				}
 				
 				h.db.xreadAllWaiters[sname] = append(h.db.xreadAllWaiters[sname], receiver)
@@ -695,11 +682,11 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 			} else {
 				_, ok := h.db.xreadIdWaiters[sname]
 				if !ok {
-					h.db.xreadIdWaiters[sname] = make(map[string]([]chan []*StreamEntry))
+					h.db.xreadIdWaiters[sname] = make(map[string]([]chan bool))
 				}
 				_, ok = h.db.xreadIdWaiters[sname][id]
 				if !ok {
-					h.db.xreadIdWaiters[sname][id] = make([]chan []*StreamEntry, 0)
+					h.db.xreadIdWaiters[sname][id] = make([]chan bool, 0)
 				}
 				//debugging
 				fmt.Println("Adding waiter for stream:", sname, " with ID:", id)
@@ -720,9 +707,19 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 
 			h.db.mu.Unlock()
 			// If duration = 0, block indefinitely
-			if blockDurationMillis == 0 {
-				xaddResults := <-receiver
-				res.results = xaddResults
+			if blockDurationMillis == 0 && blocking {
+				wakeUp := <-receiver
+				if !wakeUp {
+					results <- res
+					return
+				}
+
+				i := 0
+				for ; i < len(stream) && CompareStreamIDs(stream[i].id, id) != 1; i++ {
+					
+				}
+
+				res.results = append(res.results, stream[i:]...)
 				results <- res
 				return
 			}
@@ -734,12 +731,13 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 					return
 
 				// Otherwise: send the relevant stream entries
-				case xaddResults := <-receiver:
-					// debugging
-					fmt.Println("Woke up from blocking XREAD on stream:", sname)
-					fmt.Println("Number of new entries received:", len(xaddResults))
-					fmt.Println("ID:", xaddResults[0].id)
-					res.results = xaddResults
+				case <-receiver:
+					i := 0
+					for ; i < len(stream) && CompareStreamIDs(stream[i].id, id) != 1; i++ {
+						
+					}
+
+					res.results = append(res.results, stream[i:]...)
 					results <- res
 					return
 			}
