@@ -20,9 +20,9 @@ type DB struct {
 	// Streams
 	streamData map[string]([]*StreamEntry)
 	// Format: stream name -> ID -> list of channels waiting for new entries after ID
-	xreadIdWaiters map[string](map[string]([]chan bool))
+	xreadIdWaiters map[string](map[string]([]chan *StreamEntry))
 	// Format: stream name -> list of channels waiting for any new entries
-	xreadAllWaiters map[string]([]chan bool)
+	xreadAllWaiters map[string]([]chan *StreamEntry)
 
 	// Mutex for concurrency
 	mu sync.Mutex
@@ -160,7 +160,7 @@ func NewDB() *DB {
 		listData: make(map[string]([]string)),
 		blpopWaiters: make(map[string]([]chan string)),
 		streamData: make(map[string]([]*StreamEntry)),
-		xreadIdWaiters: make(map[string](map[string]([]chan bool))),
-		xreadAllWaiters: make(map[string]([]chan bool)),
+		xreadIdWaiters: make(map[string](map[string]([]chan *StreamEntry))),
+		xreadAllWaiters: make(map[string]([]chan *StreamEntry)),
 	}
 }
