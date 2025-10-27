@@ -430,23 +430,24 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 	h.db.SetStream(sname, stream)
 
 	// Notify all relevant XREAD waiters of newly appended entries
-	if snameWaiters, snameOk := h.db.xreadIdWaiters[sname]; snameOk {
-		for waiterId := range snameWaiters {
-			if CompareStreamIDs(waiterId, id) == 1 {
-				for _, ch := range h.db.xreadIdWaiters[sname][waiterId] {
-					ch <- stream
-				}
-			}
+
+
+	var notifyChans []chan []*StreamEntry
+	for waiterId, chans := range h.db.xreadIdWaiters[sname] {
+		if CompareStreamIDs(id, waiterId) == 1 {
+			notifyChans = append(notifyChans, chans...)
 		}
 	}
-
-	if _, allOk := h.db.xreadAllWaiters[sname]; allOk {
-		for _, ch := range h.db.xreadAllWaiters[sname] {
-			ch <- stream
+	for waiterId, chans := range h.db.xreadAllWaiters {
+		if CompareStreamIDs(id, waiterId) == 1 {
+			notifyChans = append(notifyChans, chans...)
 		}
 	}
-
-
+	h.db.mu.Unlock()
+	for _, ch := range notifyChans {
+		select { case ch <- stream: default: }
+	}
+	h.db.mu.Lock()
 
 	// Return the ID of the stream that was just added
 	return EncodeToRESP(ConvertBulkStringToRESP(id))
@@ -615,11 +616,10 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 	
 
 	h.db.mu.Lock()
-	defer h.db.mu.Unlock()
 
 
 	// For each stream, check if it exists
-	for i := firstStreamIndex; i <= lastStreamIndex+1; i++ {
+	for i := firstStreamIndex; i <= lastStreamIndex; i++ {
 		if _, ok := h.db.GetStream(args[i].String()); !ok {
 			return nil, false
 		}
@@ -630,6 +630,11 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 		results []*StreamEntry
 	}
 
+	// debugging
+	fmt.Println("Number of streams to read from:", numStreams)
+	fmt.Println("Duration to block (ms):", blockDurationMillis)
+	fmt.Println("Blocking:", blocking)
+
 	results := make(chan *WaitChanResult, numStreams)
 
 	for i := firstStreamIndex; i <= lastStreamIndex; i++ {
@@ -637,13 +642,14 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 		id := args[i + numStreams].String()
 		stream, _ := h.db.GetStream(sname)
 
+		h.db.mu.Unlock()
 		go func() {
 			res := &WaitChanResult{streamKey: sname, results: make([]*StreamEntry, 0)}
 
 			// If this isn't a blocking call, immediately send the relevant stream entries
 			// If this is a blocking call and the stream isn't empty and contains relevant elements, return with the relevant stream entries
 			if !blocking || (blocking && len(stream) > 0){
-				for i := len(stream)-1; i > 0 && CompareStreamIDs(stream[i].id, id) != 1; i-- {
+				for i := len(stream)-1; i >= 0 && CompareStreamIDs(stream[i].id, id) == 1; i-- {
 					res.results = append(res.results, stream[i])
 				}
 				if !blocking || len(results) > 0 {
@@ -659,7 +665,7 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 
 			// If id = "$", add to list of channels under stream key of xReadAllWaiters
 			if id == "$" {
-				allWaiters, ok := h.db.xreadAllWaiters[sname]
+				_, ok := h.db.xreadAllWaiters[sname]
 				if !ok {
 					h.db.xreadAllWaiters[sname] = make([]chan []*StreamEntry, 0)
 				}
@@ -671,7 +677,7 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 					defer h.db.mu.Unlock()
 					for i, ch := range h.db.xreadAllWaiters[sname] {
 						if ch == receiver {
-							h.db.xreadAllWaiters[sname] = append(allWaiters[:i], allWaiters[i+1:]...)
+							h.db.xreadAllWaiters[sname] = append(h.db.xreadAllWaiters[sname][:i], h.db.xreadAllWaiters[sname][i+1:]...)
 							break
 						}
 					}
@@ -679,11 +685,11 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 			
 			// Otherwise add to list of channels under id key under stream key of xReadIdWaiters
 			} else {
-				streamWaiters, ok := h.db.xreadIdWaiters[sname]
+				_, ok := h.db.xreadIdWaiters[sname]
 				if !ok {
 					h.db.xreadIdWaiters[sname] = make(map[string]([]chan []*StreamEntry))
 				}
-				streamIdWaiters, ok := streamWaiters[id]
+				_, ok = h.db.xreadIdWaiters[sname][id]
 				if !ok {
 					h.db.xreadIdWaiters[sname][id] = make([]chan []*StreamEntry, 0)
 				}
@@ -695,7 +701,7 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 					defer h.db.mu.Unlock()
 					for i, ch := range h.db.xreadIdWaiters[sname][id] {
 						if ch == receiver {
-							h.db.xreadIdWaiters[sname][id] = append(streamIdWaiters[:i], streamIdWaiters[i+1:]...)
+							h.db.xreadIdWaiters[sname][id] = append(h.db.xreadIdWaiters[sname][id][:i], h.db.xreadIdWaiters[sname][id][i+1:]...)
 							break
 						}
 					}
