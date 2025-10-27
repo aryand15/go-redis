@@ -511,12 +511,12 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) ([]byte, bool) {
 
 	i := 0
 	// Find first stream element in range
-	for ; i < len(stream) && CompareStreamIDs(stream[i].id, id1) == 1; i++ {
+	for ; i < len(stream) && CompareStreamIDs(stream[i].id, id1) != 0; i++ {
 		
 	}
 
 	// Add elements that are in range
-	for ; i < len(stream) && CompareStreamIDs(id2, stream[i].id) == 1; i++ {
+	for ; i < len(stream) && CompareStreamIDs(stream[i].id, id2) != 1; i++ {
 		respListEntry := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 2)}
 
 		// Add ID as first element of list
