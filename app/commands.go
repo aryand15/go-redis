@@ -648,13 +648,15 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 				for ; i < len(stream) && CompareStreamIDs(stream[i].id, id) != 1; i++ {
 					
 				}
-				if !blocking || i == len(stream) {
+
+				// Either this is a non-blocking call, or we found relevant entries right away
+				if !blocking || i != len(stream) {
 					res.results = append(res.results, stream[i:]...)
 					results <- res
 					return
 				}
 			}
-			
+
 			// Otherwise, create a channel to wait on which XADD will notify when new entries are added
 			receiver := make(chan bool)
 
