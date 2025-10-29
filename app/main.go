@@ -60,18 +60,23 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 		command := buf[:n]
 
 		handler.db.mu.Lock()
+
 		// Handle MULTI command
 		if n == 1 && strings.ToLower(string(command[0])) == "multi" {
-			if _, ok = handler.db.transactions[conn]; ok {
-				response, ok = nil, false
-			} else {
+			// Create new transaction if nonexistent
+			if _, ok = handler.db.transactions[conn]; !ok {
 				handler.db.transactions[conn] = make([][]byte, 0)
 				response, ok = []byte("+OK\r\n"), true
+			
+			// Cannot call MULTI while already in a transaction
+			} else {
+				response, ok = nil, false
 			}
+			
 			handler.db.mu.Unlock()
 
-		// If command is in a transaction, queue it instead of actually handling it
-		} else if _, ok = handler.db.transactions[conn]; ok {
+		// If command is in a transaction and is NOT "exec", queue it instead of actually handling it
+		} else if _, ok = handler.db.transactions[conn]; ok && strings.ToLower(string(command[0])) != "exec" {
 			handler.db.transactions[conn] = append(handler.db.transactions[conn], command)
 			handler.db.mu.Unlock()
 			response = []byte("+QUEUED\r\n")
