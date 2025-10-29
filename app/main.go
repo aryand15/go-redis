@@ -63,6 +63,7 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 		handler.db.mu.Lock()
 
 		_, respData, success := DecodeFromRESP(message)
+		fmt.Println(strings.ToLower(string(respData.ListRESPData[0].Data)))
 		if !success || respData.Type != Array {
 			fmt.Println("Unable to parse RESP request")
 		} else if len(respData.ListRESPData) == 0 {
