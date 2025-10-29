@@ -81,6 +81,41 @@ func (h *CommandHandler) HandleGET(args []*RESPData) ([]byte, bool) {
 	return EncodeToRESP(ConvertBulkStringToRESP(val))
 }
 
+func (h *CommandHandler) HandleINCR(args []*RESPData) ([]byte, bool) {
+	if len(args) != 2 {
+		return nil, false
+	}
+
+	key := args[1].String()
+
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+
+	val, ok := h.db.GetString(key)
+	var newVal int64
+
+	// If the key doesn't exist and is already in use, abort
+	if !ok && !h.db.CanSetString(key) {
+		return nil, false
+	
+	// Otherwise if the key doesn't exist and is available, set it to 1
+	} else if !ok {
+		newVal = 1
+	
+	// Otherwise if the key exists but can't be represented as a 64-bit integer, return an error
+	} else if intVal, err := strconv.ParseInt(val, 10, 64); err != nil {
+		return []byte("-ERR value is not an integer or out of range\r\n"), true
+	
+
+	// Otherwise we can increment the key
+	} else {
+		newVal = intVal + 1
+	}
+
+	h.db.SetString(key, strconv.FormatInt(newVal, 10))
+	return EncodeToRESP(ConvertIntToRESP(newVal))
+}
+
 func (h *CommandHandler) HandleRPUSH(args []*RESPData) ([]byte, bool) {
 	if len(args) < 3 {
 		return nil, false
@@ -117,7 +152,7 @@ func (h *CommandHandler) HandleRPUSH(args []*RESPData) ([]byte, bool) {
 	}
 
 	// Return length of array
-	return EncodeToRESP(ConvertIntToRESP(len(h.db.listData[key])))
+	return EncodeToRESP(ConvertIntToRESP(int64(len(h.db.listData[key]))))
 
 }
 
@@ -158,7 +193,7 @@ func (h *CommandHandler) HandleLPUSH(args []*RESPData) ([]byte, bool) {
 		h.db.blpopWaiters[key] = h.db.blpopWaiters[key][1:] // Remove client off the queue
 	}
 
-	return EncodeToRESP(ConvertIntToRESP(len(h.db.listData[key])))
+	return EncodeToRESP(ConvertIntToRESP(int64(len(h.db.listData[key]))))
 
 }
 
@@ -214,7 +249,7 @@ func (h *CommandHandler) HandleLLEN(args []*RESPData) ([]byte, bool) {
 	}
 
 	// Return length of list
-	return EncodeToRESP(ConvertIntToRESP(len(arrResp)))
+	return EncodeToRESP(ConvertIntToRESP(int64(len(arrResp))))
 
 }
 
@@ -431,6 +466,8 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 
 
 	// Find and wake up all relevant XREAD waiters
+
+	// Those waiting for IDs greater than a specific ID
 	for waiterId, chs := range h.db.xreadIdWaiters[sname] {
 		fmt.Println("Checking waiter ID:", waiterId, " against new entry ID:", id)
 		if CompareStreamIDs(id, waiterId) == 1 {
@@ -441,6 +478,7 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 		}
 	}
 
+	// Those waiting for any new IDs
 	for _, ch := range h.db.xreadAllWaiters[sname] {
 		go func() { select { case ch <- entry: default: } }()
 	}
@@ -537,22 +575,8 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) ([]byte, bool) {
 
 	// Add elements that are in range
 	for ; i < len(stream) && CompareStreamIDs(stream[i].id, id2) != 1; i++ {
-		respListEntry := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 2)}
-
-		// Add ID as first element of list
-		respStreamId := &RESPData{Type: BulkString, Data: []byte(stream[i].id)}
-		respListEntry.ListRESPData[0] = respStreamId
-
-		// Add list of keys & values as second element of list
-		respKVList := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
-		for k := range stream[i].values {
-			respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(k))
-			respKVList.ListRESPData = append(respKVList.ListRESPData, ConvertBulkStringToRESP(stream[i].values[k]))
-		}
-		respListEntry.ListRESPData[1] = respKVList
-
 		// Append entry to return list
-		ret.ListRESPData = append(ret.ListRESPData, respListEntry)
+		ret.ListRESPData = append(ret.ListRESPData, stream[i].RESPData())
 	}
 
 	return EncodeToRESP(ret)
@@ -597,9 +621,11 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 
 		snameToIdx[args[i - numStreams].String()] = i - firstIdIndex
 
-		// ID can be $
-		if id == "$" {
+		// ID can be $ as long as this is a blocking call
+		if id == "$" && blocking {
 			continue
+		} else if id == "$" {
+			return nil, false
 		}
 
 		// Otherwise make sure it follows the format int-int
@@ -759,11 +785,10 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 		}
 
 		// Make sure to sort ret by stream names
-
-
 		ret.ListRESPData[snameToIdx[waitChanRes.streamKey]] = streamResults
 	}
 
+	// If no streams had any relevant entries, return null array
 	if len(ret.ListRESPData) == 0 {
 		return respNullArr, true
 	}
@@ -772,6 +797,8 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 	return EncodeToRESP(ret)
 }
 
+// CompareStreamIDs compares two valid stream IDs.
+// Returns -1 if idA < idB, 1 if idA > idB, and 0 if they are equal.
 func CompareStreamIDs(idA string, idB string) (int) {
 	idAParts := strings.Split(idA, "-")
 	idBParts := strings.Split(idB, "-")
@@ -810,14 +837,24 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 
 	command := string(request[0].Data)
 	switch strings.ToLower(command) {
+	
+	// General
 	case "echo":
 		return h.HandleECHO(request)
 	case "ping":
 		return h.HandlePING()
+	case "type":
+		return h.HandleTYPE(request)
+	
+	// Key-value
 	case "set":
 		return h.HandleSET(request)
 	case "get":
 		return h.HandleGET(request)
+	case "incr":
+		return h.HandleINCR(request)
+
+	// List
 	case "rpush":
 		return h.HandleRPUSH(request)
 	case "lpush":
@@ -830,14 +867,16 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return h.HandleLPOP(request)
 	case "blpop":
 		return h.HandleBLPOP(request)
-	case "type":
-		return h.HandleTYPE(request)
+	
+	// Stream
 	case "xadd":
 		return h.HandleXADD(request)
 	case "xrange":
 		return h.HandleXRANGE(request)
 	case "xread":
 		return h.HandleXREAD(request)
+	
+
 	default:
 		return nil, false
 	}

@@ -58,10 +58,10 @@ func ConvertBulkStringToRESP(s string) *RESPData {
 	}
 }
 
-func ConvertIntToRESP(n int) *RESPData {
+func ConvertIntToRESP(n int64) *RESPData {
 	return &RESPData{
 		Type: Integer,
-		Data: []byte(strconv.Itoa(n)),
+		Data: []byte(strconv.FormatInt(n, 10)),
 	}
 }
 
