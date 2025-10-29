@@ -63,8 +63,10 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 
 		// Handle MULTI command
 		if n == 1 && strings.ToLower(string(command[0])) == "multi" {
+			fmt.Println("In the outer if statement")
 			// Create new transaction if nonexistent
 			if _, ok = handler.db.transactions[conn]; !ok {
+				fmt.Println("In the important if statement")
 				handler.db.transactions[conn] = make([][]byte, 0)
 				response, ok = []byte("+OK\r\n"), true
 			
@@ -87,7 +89,7 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 			response, ok = handler.Handle(command, conn)
 		}
 
-		
+		fmt.Println("OK:", ok)
 		if !ok {
 			fmt.Println("Error handling message")
 			return
