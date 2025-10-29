@@ -38,23 +38,6 @@ func (h *CommandHandler) HandlePING() ([]byte, bool) {
 	return respPong, true
 }
 
-func (h *CommandHandler) HandleMULTI(args []*RESPData, conn net.Conn) ([]byte, bool) {
-	if len(args) != 1 {
-		return nil, false
-	}
-	h.db.mu.Lock()
-	defer h.db.mu.Unlock()
-	// Check if connection already in the process of making transaction; if so abort
-	if _, ok := h.db.transactions[conn]; ok {
-		return nil, false
-	}
-
-	// Add connection to transactions map
-	h.db.transactions[conn] = make([][]byte, 0)
-
-	return []byte("+OK\r\n"), true
-}
-
 func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) ([]byte, bool) {
 	if len(args) != 1 {
 		return nil, false
@@ -76,7 +59,7 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) ([]byte, bo
 	if len(commands) == 0 {
 		return []byte("*0\r\n"), true
 	}
-	
+
 	return nil, false
 }
 
@@ -871,6 +854,7 @@ func (h *CommandHandler) Handle(message []byte, conn net.Conn) ([]byte, bool) {
 	}
 
 	command := string(request[0].Data)
+
 	switch strings.ToLower(command) {
 	
 	// General
@@ -880,8 +864,6 @@ func (h *CommandHandler) Handle(message []byte, conn net.Conn) ([]byte, bool) {
 		return h.HandlePING()
 	case "type":
 		return h.HandleTYPE(request)
-	case "multi":
-		return h.HandleMULTI(request, conn)
 	case "exec":
 		return h.HandleEXEC(request, conn)
 	

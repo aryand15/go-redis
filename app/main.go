@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 )
 
 
@@ -54,7 +55,34 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 			return
 		}
 
-		response, ok := handler.Handle(buf[:n], conn)
+		var response []byte
+		ok := false
+		command := buf[:n]
+
+		handler.db.mu.Lock()
+		// Handle MULTI command
+		if n == 1 && strings.ToLower(string(command[0])) == "multi" {
+			if _, ok = handler.db.transactions[conn]; ok {
+				response, ok = nil, false
+			} else {
+				handler.db.transactions[conn] = make([][]byte, 0)
+				response, ok = []byte("+OK\r\n"), true
+			}
+			handler.db.mu.Unlock()
+
+		// If command is in a transaction, queue it instead of actually handling it
+		} else if _, ok = handler.db.transactions[conn]; ok {
+			handler.db.transactions[conn] = append(handler.db.transactions[conn], command)
+			handler.db.mu.Unlock()
+			response = []byte("+QUEUED\r\n")
+		
+		// Otherwise, proceed as normal and handle the message
+		} else {
+			handler.db.mu.Unlock()
+			response, ok = handler.Handle(command, conn)
+		}
+
+		
 		if !ok {
 			fmt.Println("Error handling message")
 			return
