@@ -65,7 +65,7 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) ([]byte, bo
 
 	// Check if connection already in the process of making transaction; if not, return error
 	if _, ok := h.db.transactions[conn]; !ok {
-		return []byte("-ERR EXEC without MULTI\r\n"), false
+		return []byte("-ERR EXEC without MULTI\r\n"), true
 	}
 
 	return nil, false
