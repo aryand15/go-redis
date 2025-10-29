@@ -43,7 +43,7 @@ func (h *CommandHandler) HandleMULTI(args []*RESPData, conn net.Conn) ([]byte, b
 		return nil, false
 	}
 	h.db.mu.Lock()
-	h.db.mu.Unlock()
+	defer h.db.mu.Unlock()
 	// Check if connection already in the process of making transaction; if so abort
 	if _, ok := h.db.transactions[conn]; ok {
 		return nil, false
@@ -54,6 +54,24 @@ func (h *CommandHandler) HandleMULTI(args []*RESPData, conn net.Conn) ([]byte, b
 
 	return []byte("+OK\r\n"), true
 }
+
+func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) ([]byte, bool) {
+	if len(args) != 1 {
+		return nil, false
+	}
+
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+
+	// Check if connection already in the process of making transaction; if not, return error
+	if _, ok := h.db.transactions[conn]; !ok {
+		return []byte("-ERR EXEC without MULTI\r\n"), false
+	}
+
+	return nil, false
+}
+
+
 
 
 
@@ -867,6 +885,8 @@ func (h *CommandHandler) Handle(message []byte, conn net.Conn) ([]byte, bool) {
 		return h.HandleTYPE(request)
 	case "multi":
 		return h.HandleMULTI(request, conn)
+	case "exec":
+		return h.HandleEXEC(request, conn)
 	
 	// Key-value
 	case "set":
