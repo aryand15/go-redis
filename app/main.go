@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 )
 
 
@@ -68,7 +69,7 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 			response, ok = nil, false
 		
 		// Handle MULTI command
-		} else if n == 1 && string(respData.ListRESPData[0].Data) == "multi" {
+		} else if command := strings.ToLower(string(respData.ListRESPData[0].Data)); n == 1 && command == "multi" {
 			fmt.Println("In the outer if statement")
 			// Create new transaction if nonexistent
 			if _, ok = handler.db.transactions[conn]; !ok {
@@ -84,7 +85,7 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 			handler.db.mu.Unlock()
 
 		// If command is in a transaction and is NOT "exec", queue it instead of actually handling it
-		} else if _, ok = handler.db.transactions[conn]; ok && string(respData.ListRESPData[0].Data) != "exec" {
+		} else if _, ok = handler.db.transactions[conn]; ok && command != "exec" {
 			handler.db.transactions[conn] = append(handler.db.transactions[conn], message)
 			handler.db.mu.Unlock()
 			response = []byte("+QUEUED\r\n")
