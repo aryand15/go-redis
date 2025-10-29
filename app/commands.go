@@ -841,18 +841,9 @@ func CompareStreamIDs(idA string, idB string) (int) {
 	}
 }
 
-func (h *CommandHandler) Handle(message []byte, conn net.Conn) ([]byte, bool) {
-	_, respData, success := DecodeFromRESP(message)
-	if !success || respData.Type != Array {
-		fmt.Println("Unable to parse RESP request")
-		return nil, false
-	}
-
+func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn) ([]byte, bool) {
+	
 	request := respData.ListRESPData
-	if len(request) == 0 {
-		return nil, false
-	}
-
 	command := string(request[0].Data)
 
 	switch strings.ToLower(command) {
