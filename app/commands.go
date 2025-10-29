@@ -64,10 +64,19 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) ([]byte, bo
 	defer h.db.mu.Unlock()
 
 	// Check if connection already in the process of making transaction; if not, return error
-	if _, ok := h.db.transactions[conn]; !ok {
+	commands, ok := h.db.transactions[conn];
+	if !ok {
 		return []byte("-ERR EXEC without MULTI\r\n"), true
 	}
 
+	// Make sure to remove conn from map of transactions at the end
+	defer delete(h.db.transactions, conn)
+
+	// If empty transaction, return empty array
+	if len(commands) == 0 {
+		return []byte("*0\r\n"), true
+	}
+	
 	return nil, false
 }
 
@@ -507,9 +516,7 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 
 	// Those waiting for IDs greater than a specific ID
 	for waiterId, chs := range h.db.xreadIdWaiters[sname] {
-		fmt.Println("Checking waiter ID:", waiterId, " against new entry ID:", id)
 		if CompareStreamIDs(id, waiterId) == 1 {
-			fmt.Println("Waking up waiters for stream:", sname, " with ID:", waiterId)
 			for _, ch := range chs {
 				go func() { select { case ch <- entry: default: } }()
 			}
@@ -684,11 +691,6 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 		results []*StreamEntry
 	}
 
-	// debugging
-	fmt.Println("Number of streams to read from:", numStreams)
-	fmt.Println("Duration to block (ms):", blockDurationMillis)
-	fmt.Println("Blocking:", blocking)
-
 	results := make(chan *WaitChanResult, numStreams)
 
 	for idx := firstStreamIndex; idx <= lastStreamIndex; idx++ {
@@ -703,8 +705,6 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 		id := args[idx + numStreams].String()
 
 		go func() {
-			//debugging
-			fmt.Println("Am i even in the function that handles multiple streams")
 			res := &WaitChanResult{streamKey: sname, results: make([]*StreamEntry, 0)}
 
 			// If this isn't a blocking call, immediately send the relevant stream entries
@@ -758,8 +758,6 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 				if !ok {
 					h.db.xreadIdWaiters[sname][id] = make([]chan *StreamEntry, 0)
 				}
-				//debugging
-				fmt.Println("Adding waiter for stream:", sname, " with ID:", id)
 				h.db.xreadIdWaiters[sname][id] = append(h.db.xreadIdWaiters[sname][id], receiver)
 
 				// Make sure to remove channel from waiters list once done
@@ -786,7 +784,6 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 			select {
 				// If timeout is reached: return nil
 				case <-time.After(time.Duration(blockDurationMillis * float64(time.Millisecond))):
-					fmt.Println("Timeout reached")
 					results <- res
 					return
 
