@@ -5,6 +5,7 @@ import (
 	"time"
 	"strings"
 	"strconv"
+	"net"
 )
 
 
@@ -26,6 +27,9 @@ type DB struct {
 
 	// Mutex for concurrency
 	mu sync.Mutex
+
+	// Map of connections that are in the process of building transactions
+	transactions map[net.Conn]([][]byte)
 }
 
 type StreamEntry struct { 
@@ -162,5 +166,6 @@ func NewDB() *DB {
 		streamData: make(map[string]([]*StreamEntry)),
 		xreadIdWaiters: make(map[string](map[string]([]chan *StreamEntry))),
 		xreadAllWaiters: make(map[string]([]chan *StreamEntry)),
+		transactions: make(map[net.Conn]([][]byte)),
 	}
 }

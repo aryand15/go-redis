@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 	"math"
+	"net"
 )
 
 // Common RESP responses
@@ -36,6 +37,25 @@ func (h *CommandHandler) HandleECHO(args []*RESPData) ([]byte, bool) {
 func (h *CommandHandler) HandlePING() ([]byte, bool) {
 	return respPong, true
 }
+
+func (h *CommandHandler) HandleMULTI(args []*RESPData, conn net.Conn) ([]byte, bool) {
+	if len(args) != 1 {
+		return nil, false
+	}
+	h.db.mu.Lock()
+	h.db.mu.Unlock()
+	// Check if connection already in the process of making transaction; if so abort
+	if _, ok := h.db.transactions[conn]; ok {
+		return nil, false
+	}
+
+	// Add connection to transactions map
+	h.db.transactions[conn] = make([][]byte, 0)
+
+	return []byte("+OK\r\n"), true
+}
+
+
 
 func (h *CommandHandler) HandleSET(args []*RESPData) ([]byte, bool) {
 	if len(args) != 3 && len(args) != 5 {
@@ -823,7 +843,7 @@ func CompareStreamIDs(idA string, idB string) (int) {
 	}
 }
 
-func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
+func (h *CommandHandler) Handle(message []byte, conn net.Conn) ([]byte, bool) {
 	_, respData, success := DecodeFromRESP(message)
 	if !success || respData.Type != Array {
 		fmt.Println("Unable to parse RESP request")
@@ -845,6 +865,8 @@ func (h *CommandHandler) Handle(message []byte) ([]byte, bool) {
 		return h.HandlePING()
 	case "type":
 		return h.HandleTYPE(request)
+	case "multi":
+		return h.HandleMULTI(request, conn)
 	
 	// Key-value
 	case "set":

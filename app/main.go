@@ -54,7 +54,7 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 			return
 		}
 
-		response, ok := handler.Handle(buf[:n])
+		response, ok := handler.Handle(buf[:n], conn)
 		if !ok {
 			fmt.Println("Error handling message")
 			return
