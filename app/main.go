@@ -63,15 +63,14 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 		handler.db.mu.Lock()
 
 		_, respData, success := DecodeFromRESP(message)
-		fmt.Println(strings.ToLower(string(respData.ListRESPData[0].Data)))
-		fmt.Println(n)
+		
 		if !success || respData.Type != Array {
 			fmt.Println("Unable to parse RESP request")
 		} else if len(respData.ListRESPData) == 0 {
 			response, ok = nil, false
 		
 		// Handle MULTI command
-		} else if command := strings.ToLower(string(respData.ListRESPData[0].Data)); n == 1 && command == "multi" {
+		} else if chunks := respData.ListRESPData; len(chunks) == 1 && strings.ToLower(chunks[0].String()) == "multi" {
 			fmt.Println("In the outer if statement")
 			// Create new transaction if nonexistent
 			if _, ok = handler.db.transactions[conn]; !ok {
@@ -87,7 +86,7 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 			handler.db.mu.Unlock()
 
 		// If command is in a transaction and is NOT "exec", queue it instead of actually handling it
-		} else if _, ok = handler.db.transactions[conn]; ok && command != "exec" {
+		} else if _, ok = handler.db.transactions[conn]; ok && strings.ToLower(chunks[0].String()) != "exec" {
 			handler.db.transactions[conn] = append(handler.db.transactions[conn], message)
 			handler.db.mu.Unlock()
 			response = []byte("+QUEUED\r\n")
