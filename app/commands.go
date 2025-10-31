@@ -27,7 +27,7 @@ func (h *CommandHandler) HandleECHO(args []*RESPData) (*RESPData, bool) {
 }
 
 func (h *CommandHandler) HandlePING() (*RESPData, bool) {
-	return &RESPData{Type: SimpleString, Data: RespPong}, true
+	return &RESPData{Type: SimpleString, Data: []byte("PONG")}, true
 }
 
 func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) (*RESPData, bool) {
