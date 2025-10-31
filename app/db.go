@@ -48,7 +48,7 @@ type Set[T comparable] struct {
 }
 
 func (s *Set[T]) Add(entry T) {
-	if _, ok := s.set[entry]; ok {
+	if _, ok := s.set[entry]; !ok {
 		s.set[entry] = struct{}{}
 		s.length++
 	}
