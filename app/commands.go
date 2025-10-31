@@ -965,7 +965,7 @@ func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn, inTransaction
 	case "subscribe":
 		res, ok = h.HandleSUBSCRIBE(request, conn)
 	case "publish":
-		res, ok = h.HandlePUBLISH(request, conn)
+		res, ok = h.HandlePUBLISH(request)
 
 	// Key-value
 	case "set":
