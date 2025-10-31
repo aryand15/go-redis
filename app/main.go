@@ -67,7 +67,7 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 			return
 		}
 
-		firstWord := strings.ToLower(string(message[0]))
+		firstWord := strings.ToLower(string(respData.ListRESPData[0].Data))
 
 		if firstWord == "exec" || firstWord == "discard" {
 			inTransaction = false
