@@ -2,14 +2,12 @@ package main
 
 import (
 	"fmt"
+	"math"
+	"net"
 	"strconv"
 	"strings"
 	"time"
-	"math"
-	"net"
 )
-
-
 
 type CommandHandler struct {
 	db *DB
@@ -37,7 +35,7 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) (*RESPData,
 
 	h.db.mu.Lock()
 	// Check if connection already in the process of making transaction; if not, return error
-	commands, ok := h.db.transactions[conn];
+	commands, ok := h.db.transactions[conn]
 	if !ok {
 		delete(h.db.transactions, conn)
 		h.db.mu.Unlock()
@@ -65,7 +63,6 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) (*RESPData,
 
 	}
 
-
 	return ret, true
 }
 
@@ -77,10 +74,9 @@ func (h *CommandHandler) HandleMULTI(args []*RESPData, conn net.Conn) (*RESPData
 		h.db.transactions[conn] = make([][]byte, 0)
 		return &RESPData{Type: SimpleString, Data: []byte("OK")}, true
 	}
-	
+
 	// Cannot call MULTI while already in a transaction
 	return nil, false
-	
 
 }
 
@@ -98,9 +94,43 @@ func (h *CommandHandler) HandleDISCARD(args []*RESPData, conn net.Conn) (*RESPDa
 	return &RESPData{Type: SimpleString, Data: []byte("OK")}, true
 }
 
+func (h *CommandHandler) HandleSUBSCRIBE(args []*RESPData, conn net.Conn) (*RESPData, bool) {
+	if len(args) != 2 {
+		return nil, false
+	}
 
+	pubChanName := args[2].String()
+	ch := make(chan string)
 
+	h.db.mu.Lock()
 
+	// Add channel to publisher client list
+	clientList, ok := h.db.subscribers[pubChanName]
+	if !ok {
+		h.db.subscribers[pubChanName] = make([]chan string, 0)
+	}
+
+	clientList = append(clientList, ch)
+	h.db.subscribers[pubChanName] = clientList
+
+	// Add publisher channel name to list of subscribed channels for this client
+	subscriptionList, ok := h.db.publishers[conn]
+	if !ok {
+		h.db.publishers[conn] = make([]string, 0)
+	}
+
+	subscriptionList = append(subscriptionList, pubChanName)
+	h.db.publishers[conn] = subscriptionList
+
+	// Save number of subscriptions for output
+	numSubscribed := len(h.db.publishers[conn])
+
+	h.db.mu.Unlock()
+
+	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+	ret.ListRESPData = append(ret.ListRESPData, ConvertBulkStringToRESP("subscribe"), ConvertBulkStringToRESP(pubChanName), ConvertIntToRESP(int64(numSubscribed)))
+	return ret, true
+}
 
 func (h *CommandHandler) HandleSET(args []*RESPData) (*RESPData, bool) {
 	if len(args) != 3 && len(args) != 5 {
@@ -162,17 +192,16 @@ func (h *CommandHandler) HandleINCR(args []*RESPData) (*RESPData, bool) {
 	// If the key doesn't exist and is already in use, abort
 	if !ok && !h.db.CanSetString(key) {
 		return nil, false
-	
-	// Otherwise if the key doesn't exist and is available, set it to 1
+
+		// Otherwise if the key doesn't exist and is available, set it to 1
 	} else if !ok {
 		newVal = 1
-	
-	// Otherwise if the key exists but can't be represented as a 64-bit integer, return an error
+
+		// Otherwise if the key exists but can't be represented as a 64-bit integer, return an error
 	} else if intVal, err := strconv.ParseInt(val, 10, 64); err != nil {
 		return &RESPData{Type: SimpleError, Data: []byte("ERR value is not an integer or out of range")}, true
-	
 
-	// Otherwise we can increment the key
+		// Otherwise we can increment the key
 	} else {
 		newVal = intVal + 1
 	}
@@ -228,8 +257,6 @@ func (h *CommandHandler) HandleLPUSH(args []*RESPData) (*RESPData, bool) {
 
 	// The name of the array for which we want to push
 	key := args[1].String()
-
-	
 
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
@@ -293,7 +320,7 @@ func (h *CommandHandler) HandleLRANGE(args []*RESPData) (*RESPData, bool) {
 		return &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}, true
 	}
 
-	return convertListToRESP(val[start : stop+1]), true
+	return ConvertListToRESP(val[start : stop+1]), true
 
 }
 
@@ -309,7 +336,7 @@ func (h *CommandHandler) HandleLLEN(args []*RESPData) (*RESPData, bool) {
 
 	// If list doesn't exist, return 0
 	arrResp, ok := h.db.GetList(arrName)
-	if !ok  {
+	if !ok {
 		return ConvertIntToRESP(0), true
 	}
 
@@ -341,7 +368,7 @@ func (h *CommandHandler) HandleBLPOP(args []*RESPData) (*RESPData, bool) {
 		poppedVal := data[0]
 		h.db.listData[key] = data[1:]
 		h.db.mu.Unlock()
-		return convertListToRESP([]string{key, poppedVal}), true
+		return ConvertListToRESP([]string{key, poppedVal}), true
 	}
 
 	// Add client to list of blocked clients on this array
@@ -358,7 +385,7 @@ func (h *CommandHandler) HandleBLPOP(args []*RESPData) (*RESPData, bool) {
 		h.db.mu.Lock()
 		defer h.db.mu.Unlock()
 		h.db.listData[key] = h.db.listData[key][1:] // Remove the popped element from the array
-		return convertListToRESP([]string{key, poppedVal}), true
+		return ConvertListToRESP([]string{key, poppedVal}), true
 	}
 
 	// Otherwise block until channel receives value or timeout occurs
@@ -383,7 +410,7 @@ func (h *CommandHandler) HandleBLPOP(args []*RESPData) (*RESPData, bool) {
 		h.db.mu.Lock()
 		defer h.db.mu.Unlock()
 		h.db.listData[key] = h.db.listData[key][1:] // Remove the popped element from the array
-		return convertListToRESP([]string{key, poppedVal}), true
+		return ConvertListToRESP([]string{key, poppedVal}), true
 
 	}
 
@@ -430,7 +457,7 @@ func (h *CommandHandler) HandleLPOP(args []*RESPData) (*RESPData, bool) {
 		return ConvertBulkStringToRESP(ret[0]), true
 	}
 	// Return array of removed elements otherwise
-	return convertListToRESP(ret), true
+	return ConvertListToRESP(ret), true
 
 }
 
@@ -441,16 +468,16 @@ func (h *CommandHandler) HandleTYPE(args []*RESPData) (*RESPData, bool) {
 
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
-	_, isString := h.db.GetString(args[1].String());
+	_, isString := h.db.GetString(args[1].String())
 	if isString {
 		return &RESPData{Type: SimpleString, Data: []byte("string")}, true
 	}
-	_, isList := h.db.GetList(args[1].String());
+	_, isList := h.db.GetList(args[1].String())
 	if isList {
 		return &RESPData{Type: SimpleString, Data: []byte("list")}, true
 	}
 
-	_, isStream := h.db.GetStream(args[1].String());
+	_, isStream := h.db.GetStream(args[1].String())
 	if isStream {
 		return &RESPData{Type: SimpleString, Data: []byte("stream")}, true
 	}
@@ -459,12 +486,11 @@ func (h *CommandHandler) HandleTYPE(args []*RESPData) (*RESPData, bool) {
 }
 
 func (h *CommandHandler) HandleXADD(args []*RESPData) (*RESPData, bool) {
-	if len(args) < 5 || len(args) % 2 == 0 {
+	if len(args) < 5 || len(args)%2 == 0 {
 		return nil, false
 	}
 
 	sname := args[1].String()
-	
 
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
@@ -486,36 +512,35 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) (*RESPData, bool) {
 	// Cannot be 0-0
 	if id == "0-0" {
 		return &RESPData{Type: SimpleError, Data: []byte("ERR The ID specified in XADD must be greater than 0-0")}, true
-	// Edge case: no previous entries and millis is 0
+		// Edge case: no previous entries and millis is 0
 	} else if id == "0-*" && len(stream) == 0 {
 		id = "0-1"
-	// If ID is *, generate new ID based on previous entry (if exists)
+		// If ID is *, generate new ID based on previous entry (if exists)
 	} else if id == "*" && len(stream) == 0 {
 		id = fmt.Sprintf("%d-%d", time.Now().UnixMilli(), 0)
 	} else if id == "*" {
 		id = generateNewStreamID(stream[len(stream)-1].id)
-	// Make sure ID is in the format int-int or int-*
+		// Make sure ID is in the format int-int or int-*
 	} else if idParts := strings.Split(id, "-"); len(idParts) != 2 {
 		return nil, false
 	} else if millis, err1 := strconv.Atoi(idParts[0]); err1 != nil {
 		return nil, false
 	} else if seqNum, err2 := strconv.Atoi(idParts[1]); err2 != nil && idParts[1] != "*" {
 		return nil, false
-	// Make sure millis is greater than or equal to previous entry's millis
+		// Make sure millis is greater than or equal to previous entry's millis
 	} else if len(stream) > 0 && millis < stream[len(stream)-1].GetMillis() {
 		return &RESPData{Type: SimpleError, Data: []byte("ERR The ID specified in XADD is equal or smaller than the target stream top item")}, true
-	// Handle int-* case
+		// Handle int-* case
 	} else if idParts[1] == "*" && len(stream) > 0 && millis == stream[len(stream)-1].GetMillis() {
 		id = fmt.Sprintf("%d-%d", millis, stream[len(stream)-1].GetSeqNum()+1)
 	} else if idParts[1] == "*" {
 		id = fmt.Sprintf("%d-0", millis)
-	// Make sure seqNum is greater than previous entry's seqNum if millis are equal
+		// Make sure seqNum is greater than previous entry's seqNum if millis are equal
 	} else if len(stream) > 0 && seqNum <= stream[len(stream)-1].GetSeqNum() && millis == stream[len(stream)-1].GetMillis() {
 		return &RESPData{Type: SimpleError, Data: []byte("ERR The ID specified in XADD is equal or smaller than the target stream top item")}, true
 	} else {
 		// ID is valid, do nothing
-	} 
-
+	}
 
 	// Populate the stream entry to be added to the stream
 	entry := &StreamEntry{id: id, values: make(map[string]string)}
@@ -529,21 +554,30 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) (*RESPData, bool) {
 	stream = append(stream, entry)
 	h.db.SetStream(sname, stream)
 
-
 	// Find and wake up all relevant XREAD waiters
 
 	// Those waiting for IDs greater than a specific ID
 	for waiterId, chs := range h.db.xreadIdWaiters[sname] {
 		if CompareStreamIDs(id, waiterId) == 1 {
 			for _, ch := range chs {
-				go func() { select { case ch <- entry: default: } }()
+				go func() {
+					select {
+					case ch <- entry:
+					default:
+					}
+				}()
 			}
 		}
 	}
 
 	// Those waiting for any new IDs
 	for _, ch := range h.db.xreadAllWaiters[sname] {
-		go func() { select { case ch <- entry: default: } }()
+		go func() {
+			select {
+			case ch <- entry:
+			default:
+			}
+		}()
 	}
 
 	// Return the ID of the stream that was just added
@@ -576,7 +610,6 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) (*RESPData, bool) {
 	sname := args[1].String()
 	id1 := args[2].String()
 	id2 := args[3].String()
-	
 
 	// Validate IDs
 	if id1 == "-" {
@@ -604,22 +637,20 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) (*RESPData, bool) {
 			seqNum2, err2 = strconv.Atoi(id2Parts[1])
 		}
 
-		if err1 != nil || err2 != nil{
+		if err1 != nil || err2 != nil {
 			return nil, false
 		}
 		id1 = fmt.Sprintf("%d-%d", millis1, seqNum1)
 		id2 = fmt.Sprintf("%d-%d", millis2, seqNum2)
-	
+
 	}
 
-
 	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
-	
+
 	// If first ID is greater than second, return empty list right away
 	if CompareStreamIDs(id1, id2) == 1 {
 		return ret, true
 	}
-
 
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
@@ -633,7 +664,7 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) (*RESPData, bool) {
 	i := 0
 	// Find first stream element in range
 	for ; i < len(stream) && CompareStreamIDs(stream[i].id, id1) == -1; i++ {
-		
+
 	}
 
 	// Add elements that are in range
@@ -647,7 +678,7 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) (*RESPData, bool) {
 }
 
 func (h *CommandHandler) HandleXREAD(args []*RESPData) (*RESPData, bool) {
-	if len(args) < 4 || len(args) % 2 == 1 || (strings.ToLower(args[1].String()) != "streams" && strings.ToLower(args[1].String()) != "block") {
+	if len(args) < 4 || len(args)%2 == 1 || (strings.ToLower(args[1].String()) != "streams" && strings.ToLower(args[1].String()) != "block") {
 		return nil, false
 	} else if strings.ToLower(args[1].String()) == "block" && strings.ToLower(args[3].String()) != "streams" {
 		return nil, false
@@ -676,13 +707,11 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) (*RESPData, bool) {
 	// Create map of stream names to order for sorting purposes later on
 	snameToIdx := make(map[string]int)
 
-
-
 	// Validate each ID
 	for i := firstIdIndex; i < lastIdIndex+1; i++ {
 		id := args[i].String()
 
-		snameToIdx[args[i - numStreams].String()] = i - firstIdIndex
+		snameToIdx[args[i-numStreams].String()] = i - firstIdIndex
 
 		// ID can be $ as long as this is a blocking call
 		if id == "$" && blocking {
@@ -705,8 +734,8 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) (*RESPData, bool) {
 	}
 
 	type WaitChanResult struct {
-		streamKey string;
-		results []*StreamEntry
+		streamKey string
+		results   []*StreamEntry
 	}
 
 	results := make(chan *WaitChanResult, numStreams)
@@ -720,17 +749,17 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) (*RESPData, bool) {
 		if !ok {
 			return nil, false
 		}
-		id := args[idx + numStreams].String()
+		id := args[idx+numStreams].String()
 
 		go func() {
 			res := &WaitChanResult{streamKey: sname, results: make([]*StreamEntry, 0)}
 
 			// If this isn't a blocking call, immediately send the relevant stream entries
 			// If this is a blocking call and the stream isn't empty and contains relevant elements, return with the relevant stream entries
-			if id != "$" && (!blocking || (blocking && len(stream) > 0)){
+			if id != "$" && (!blocking || (blocking && len(stream) > 0)) {
 				i := 0
 				for ; i < len(stream) && CompareStreamIDs(stream[i].id, id) != 1; i++ {
-					
+
 				}
 
 				// Either this is a non-blocking call, or we found relevant entries right away
@@ -744,15 +773,13 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) (*RESPData, bool) {
 			// Otherwise, create a channel to wait on which XADD will notify when new entries are added
 			receiver := make(chan *StreamEntry)
 
-			
-
 			// If id = "$", add to list of channels under stream key of xReadAllWaiters
 			if id == "$" {
 				_, ok := h.db.xreadAllWaiters[sname]
 				if !ok {
 					h.db.xreadAllWaiters[sname] = make([]chan *StreamEntry, 0)
 				}
-				
+
 				h.db.xreadAllWaiters[sname] = append(h.db.xreadAllWaiters[sname], receiver)
 				// Make sure to remove channel from waiters list once done
 				defer func() {
@@ -765,8 +792,8 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) (*RESPData, bool) {
 						}
 					}
 				}()
-			
-			// Otherwise add to list of channels under id key under stream key of xReadIdWaiters
+
+				// Otherwise add to list of channels under id key under stream key of xReadIdWaiters
 			} else {
 				_, ok := h.db.xreadIdWaiters[sname]
 				if !ok {
@@ -800,39 +827,37 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) (*RESPData, bool) {
 			}
 			// Otherwise do a select statement, blocking until timeout is reached
 			select {
-				// If timeout is reached: return nil
-				case <-time.After(time.Duration(blockDurationMillis * float64(time.Millisecond))):
-					results <- res
-					return
+			// If timeout is reached: return nil
+			case <-time.After(time.Duration(blockDurationMillis * float64(time.Millisecond))):
+				results <- res
+				return
 
-				// Otherwise: send the relevant stream entries
-				case entry := <-receiver:
-					res.results = append(res.results, entry)
-					results <- res
-					return
+			// Otherwise: send the relevant stream entries
+			case entry := <-receiver:
+				res.results = append(res.results, entry)
+				results <- res
+				return
 			}
-			
+
 		}()
 		h.db.mu.Unlock()
 	}
-	
 
 	ret := &RESPData{Type: Array}
 	for i := 0; i < numStreams; i++ {
-		waitChanRes := <- results
+		waitChanRes := <-results
 		if len(waitChanRes.results) == 0 {
 			continue
 		}
 		streamResults := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 2)}
 		streamResults.ListRESPData[0] = ConvertBulkStringToRESP(waitChanRes.streamKey)
-		streamResultIds := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)} 
-		
+		streamResultIds := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
 
 		for _, res := range waitChanRes.results {
 			streamResultIds.ListRESPData = append(streamResultIds.ListRESPData, res.RESPData())
 		}
 		streamResults.ListRESPData[1] = streamResultIds
-		
+
 		if ret.ListRESPData == nil {
 			ret.ListRESPData = make([]*RESPData, numStreams)
 		}
@@ -845,14 +870,13 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) (*RESPData, bool) {
 	if len(ret.ListRESPData) == 0 {
 		return &RESPData{Type: Array}, true
 	}
-	
 
 	return ret, true
 }
 
 // CompareStreamIDs compares two valid stream IDs.
 // Returns -1 if idA < idB, 1 if idA > idB, and 0 if they are equal.
-func CompareStreamIDs(idA string, idB string) (int) {
+func CompareStreamIDs(idA string, idB string) int {
 	idAParts := strings.Split(idA, "-")
 	idBParts := strings.Split(idB, "-")
 
@@ -877,7 +901,7 @@ func CompareStreamIDs(idA string, idB string) (int) {
 }
 
 func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn, inTransaction bool) ([]byte, bool) {
-	
+
 	request := respData.ListRESPData
 	firstWord := strings.ToLower(string(request[0].Data))
 
@@ -898,7 +922,7 @@ func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn, inTransaction
 
 	// Otherwise, proceed as normal and handle the message
 	switch firstWord {
-	
+
 	// General
 	case "echo":
 		res, ok = h.HandleECHO(request)
@@ -906,13 +930,19 @@ func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn, inTransaction
 		res, ok = h.HandlePING()
 	case "type":
 		res, ok = h.HandleTYPE(request)
+
+	// Transactions
 	case "exec":
 		res, ok = h.HandleEXEC(request, conn)
 	case "multi":
 		res, ok = h.HandleMULTI(request, conn)
 	case "discard":
 		res, ok = h.HandleDISCARD(request, conn)
-	
+
+	// Pub-sub
+	case "subscribe":
+		res, ok = h.HandleSUBSCRIBE(request, conn)
+
 	// Key-value
 	case "set":
 		res, ok = h.HandleSET(request)
@@ -934,7 +964,7 @@ func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn, inTransaction
 		res, ok = h.HandleLPOP(request)
 	case "blpop":
 		res, ok = h.HandleBLPOP(request)
-	
+
 	// Stream
 	case "xadd":
 		res, ok = h.HandleXADD(request)

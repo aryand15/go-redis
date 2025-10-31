@@ -30,6 +30,11 @@ type DB struct {
 
 	// Map of connections that are in the process of building transactions
 	transactions map[net.Conn]([][]byte)
+
+	// Pub-sub
+	subscribers map[string][](chan string) // Maps publisher channel name to list of receiving clients
+	publishers map[net.Conn]([]string) // Maps client to list of subscribed publisher channels
+
 }
 
 type StreamEntry struct { 
@@ -167,5 +172,7 @@ func NewDB() *DB {
 		xreadIdWaiters: make(map[string](map[string]([]chan *StreamEntry))),
 		xreadAllWaiters: make(map[string]([]chan *StreamEntry)),
 		transactions: make(map[net.Conn]([][]byte)),
+		subscribers: make(map[string][]chan string),
+		publishers: make(map[net.Conn][]string),
 	}
 }

@@ -75,7 +75,7 @@ func ConvertIntToRESP(n int64) *RESPData {
 	}
 }
 
-func convertListToRESP(arr []string) *RESPData {
+func ConvertListToRESP(arr []string) *RESPData {
 	listResp := &RESPData{
 		Type:         Array,
 		ListRESPData: make([]*RESPData, len(arr)),
