@@ -48,7 +48,7 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) (*RESPData,
 	if len(commands) == 0 {
 		delete(h.db.transactions, conn)
 		h.db.mu.Unlock()
-		return &RESPData{Type: Array}, true
+		return &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}, true
 	}
 
 	h.db.mu.Unlock()
