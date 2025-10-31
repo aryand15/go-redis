@@ -133,6 +133,27 @@ func (h *CommandHandler) HandleSUBSCRIBE(args []*RESPData, conn net.Conn) (*RESP
 	return ret, true
 }
 
+func (h *CommandHandler) HandlePUBLISH(args []*RESPData) (*RESPData, bool) {
+	if len(args) != 3 {
+		return nil, false
+	}
+
+	channelName := args[1].String()
+	//messageContents := args[2].String()
+
+	numSubscribers := 0
+	h.db.mu.Lock()
+	if _, ok := h.db.subscribers[channelName]; ok {
+		numSubscribers = h.db.subscribers[channelName].length
+	}
+	h.db.mu.Unlock()
+
+	return ConvertIntToRESP(int64(numSubscribers)), true
+
+
+}
+
+
 func (h *CommandHandler) HandleSET(args []*RESPData) (*RESPData, bool) {
 	if len(args) != 3 && len(args) != 5 {
 		return nil, false
@@ -943,6 +964,8 @@ func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn, inTransaction
 	// Pub-sub
 	case "subscribe":
 		res, ok = h.HandleSUBSCRIBE(request, conn)
+	case "publish":
+		res, ok = h.HandlePUBLISH(request, conn)
 
 	// Key-value
 	case "set":
