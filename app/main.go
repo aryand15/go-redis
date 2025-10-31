@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 )
 
 
@@ -43,6 +44,7 @@ func startServer(handler *CommandHandler) error {
 func handleConn(conn net.Conn, handler *CommandHandler) {
 	defer conn.Close()
 	buf := make([]byte, bufferSize)
+	inTransaction := false
 
 	for {
 		n, err := conn.Read(buf)
@@ -65,12 +67,25 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 			return
 		}
 
-		response, ok = handler.Handle(respData, conn, false)
+		firstWord := strings.ToLower(string(message[0]))
+
+		if firstWord == "exec" || firstWord == "discard" {
+			inTransaction = false
+		}
+
+		response, ok = handler.Handle(respData, conn, inTransaction)
+
+
+		if strings.ToLower(string(message[0])) == "multi" {
+			inTransaction = !inTransaction
+		}
 
 		if !ok {
 			fmt.Println("Error handling message")
 			return
 		}
+
+		
 
 		if _, err := conn.Write(response); err != nil {
 			fmt.Printf("Error writing response: %v\n", err)
