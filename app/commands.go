@@ -36,21 +36,22 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) (*RESPData,
 	}
 
 	h.db.mu.Lock()
-	defer h.db.mu.Unlock()
-
 	// Check if connection already in the process of making transaction; if not, return error
 	commands, ok := h.db.transactions[conn];
 	if !ok {
+		delete(h.db.transactions, conn)
+		h.db.mu.Unlock()
 		return &RESPData{Type: SimpleString, Data: []byte("-ERR EXEC without MULTI\r\n")}, true
 	}
 
-	// Make sure to remove conn from map of transactions at the end
-	defer delete(h.db.transactions, conn)
-
 	// If empty transaction, return empty array
 	if len(commands) == 0 {
+		delete(h.db.transactions, conn)
+		h.db.mu.Unlock()
 		return &RESPData{Type: SimpleString, Data: []byte("*0\r\n")}, true
 	}
+
+	h.db.mu.Unlock()
 
 	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
 	for _, c := range commands {
@@ -914,7 +915,6 @@ func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn) ([]byte, bool
 	case "exec":
 		res, ok = h.HandleEXEC(request, conn)
 	case "multi":
-		fmt.Println("going to handle multi")
 		res, ok = h.HandleMULTI(request, conn)
 	case "discard":
 		res, ok = h.HandleDISCARD(request, conn)
