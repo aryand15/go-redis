@@ -70,9 +70,11 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) (*RESPData,
 
 func (h *CommandHandler) HandleMULTI(args []*RESPData, conn net.Conn) (*RESPData, bool) {
 	// Create new transaction if nonexistent
+	fmt.Println("in handler")
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
 	if _, ok := h.db.transactions[conn]; !ok {
+		fmt.Println("going to create transaction data")
 		h.db.transactions[conn] = make([][]byte, 0)
 		return &RESPData{Type: SimpleString, Data: []byte("+OK\r\n")}, true
 	}
@@ -876,15 +878,16 @@ func CompareStreamIDs(idA string, idB string) (int) {
 }
 
 func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn) ([]byte, bool) {
+	fmt.Println("about to handle")
 	
 	request := respData.ListRESPData
-	firstWord := string(request[0].Data)
+	firstWord := strings.ToLower(string(request[0].Data))
 
 	var res *RESPData
 	var ok bool
 
 	// If the command is being done under a transaction, and isn't exec, multi, or discard, simply queue it, don't execute it.
-	if word := strings.ToLower(firstWord); word != "exec" && word != "multi" && word != "discard" {
+	if firstWord != "exec" && firstWord != "multi" && firstWord != "discard" {
 		h.db.mu.Lock()
 		if _, ok := h.db.transactions[conn]; ok {
 			respRequest, _ := EncodeToRESP(respData)
@@ -896,7 +899,7 @@ func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn) ([]byte, bool
 	}
 
 	// Otherwise, proceed as normal and handle the message
-	switch strings.ToLower(firstWord) {
+	switch firstWord {
 	
 	// General
 	case "echo":
@@ -908,6 +911,7 @@ func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn) ([]byte, bool
 	case "exec":
 		res, ok = h.HandleEXEC(request, conn)
 	case "multi":
+		fmt.Println("going to handle multi")
 		res, ok = h.HandleMULTI(request, conn)
 	case "discard":
 		res, ok = h.HandleDISCARD(request, conn)
