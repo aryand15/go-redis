@@ -76,7 +76,7 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 		response, ok = handler.Handle(respData, conn, inTransaction)
 
 
-		if strings.ToLower(string(message[0])) == "multi" {
+		if firstWord == "multi" {
 			inTransaction = !inTransaction
 		}
 
