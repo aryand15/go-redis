@@ -24,8 +24,13 @@ func (h *CommandHandler) HandleECHO(args []*RESPData) (*RESPData, bool) {
 	return &RESPData{Type: BulkString, Data: args[1].Data}, true
 }
 
-func (h *CommandHandler) HandlePING() (*RESPData, bool) {
-	return &RESPData{Type: SimpleString, Data: []byte("PONG")}, true
+func (h *CommandHandler) HandlePING(inSubscribeMode bool) (*RESPData, bool) {
+	if !inSubscribeMode {
+		return &RESPData{Type: SimpleString, Data: []byte("PONG")}, true
+	}
+
+	return ConvertListToRESP([]string{"PONG", ""}), true
+	
 }
 
 func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) (*RESPData, bool) {
@@ -923,7 +928,7 @@ func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn, inTransaction
 	case "echo":
 		res, ok = h.HandleECHO(request)
 	case "ping":
-		res, ok = h.HandlePING()
+		res, ok = h.HandlePING(false)
 	case "type":
 		res, ok = h.HandleTYPE(request)
 
@@ -991,6 +996,7 @@ func (h *CommandHandler) HandleSubscribeMode(respData *RESPData, conn net.Conn) 
 	case "psubscribe":
 	case "punsubscribe":
 	case "ping":
+		res, ok = h.HandlePING(true)
 	case "quit":
 	default:
 		err := fmt.Sprintf("ERR can't execute '%s': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context", firstWord)
