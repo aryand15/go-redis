@@ -58,24 +58,17 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 		ok := false
 		message := buf[:n]
 
-
-		handler.db.mu.Lock()
-
 		_, respData, success := DecodeFromRESP(message)
 		
 		if !success || respData.Type != Array || len(respData.ListRESPData) == 0 {
 			fmt.Println("Unable to parse RESP request")
+			return
 		}
 
 		response, ok = handler.Handle(respData, conn)
 
 		if !ok {
 			fmt.Println("Error handling message")
-
-			// Remove connection from transactions map if it exists
-			handler.db.mu.Lock()
-			delete(handler.db.transactions, conn)
-			handler.db.mu.Unlock()
 			return
 		}
 
