@@ -95,7 +95,7 @@ func (h *CommandHandler) HandleDISCARD(args []*RESPData, conn net.Conn) (*RESPDa
 
 	// Otherwise, simply delete the transaction
 	delete(h.db.transactions, conn)
-	return &RESPData{Type: SimpleString, Data: RespOK}, true
+	return &RESPData{Type: SimpleString, Data: []byte("OK")}, true
 }
 
 
@@ -128,7 +128,7 @@ func (h *CommandHandler) HandleSET(args []*RESPData) (*RESPData, bool) {
 	} else if timeOption == "PX" {
 		h.db.TimedSetString(key, val, time.Duration(duration)*time.Millisecond)
 	}
-	return &RESPData{Type: SimpleString, Data: RespOK}, true
+	return &RESPData{Type: SimpleString, Data: []byte("OK")}, true
 }
 
 func (h *CommandHandler) HandleGET(args []*RESPData) (*RESPData, bool) {
