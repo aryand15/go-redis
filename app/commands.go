@@ -29,7 +29,7 @@ func (h *CommandHandler) HandlePING(inSubscribeMode bool) (*RESPData, bool) {
 		return &RESPData{Type: SimpleString, Data: []byte("PONG")}, true
 	}
 
-	return ConvertListToRESP([]string{"PONG", ""}), true
+	return ConvertListToRESP([]string{"pong", ""}), true
 	
 }
 
