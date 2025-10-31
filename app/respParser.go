@@ -86,6 +86,13 @@ func ConvertListToRESP(arr []string) *RESPData {
 	return listResp
 }
 
+func convertSimpleErrorToRESP(s string) *RESPData {
+	return &RESPData{
+		Type: SimpleError,
+		Data: []byte(s),
+	}
+}
+
 func DecodeFromRESP(b []byte) (numRead int, resp *RESPData, success bool) {
 	// Error: Byte array is empty
 	if len(b) == 0 {

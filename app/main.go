@@ -45,6 +45,7 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 	defer conn.Close()
 	buf := make([]byte, bufferSize)
 	inTransaction := false
+	inSubscribeMode := false
 
 	for {
 		n, err := conn.Read(buf)
@@ -69,17 +70,31 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 
 		firstWord := strings.ToLower(string(respData.ListRESPData[0].Data))
 
-		if firstWord == "exec" || firstWord == "discard" {
-			inTransaction = false
+		if inSubscribeMode {
+
+			response, ok = handler.HandleSubscribeMode(respData, conn)
+			if ok && firstWord == "quit" {
+				inSubscribeMode = false
+			}
+
+		} else {
+
+			if firstWord == "exec" || firstWord == "discard" {
+				inTransaction = false
+			}
+
+			response, ok = handler.Handle(respData, conn, inTransaction)
+
+
+			if ok && firstWord == "multi" {
+				inTransaction = !inTransaction
+			} else if ok && !inSubscribeMode && firstWord == "subscribe" {
+				inSubscribeMode = true
+			}
+
 		}
 
-		response, ok = handler.Handle(respData, conn, inTransaction)
-
-
-		if firstWord == "multi" {
-			inTransaction = !inTransaction
-		}
-
+		
 		if !ok {
 			fmt.Println("Error handling message")
 			return

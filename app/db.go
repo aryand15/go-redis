@@ -32,14 +32,33 @@ type DB struct {
 	transactions map[net.Conn]([][]byte)
 
 	// Pub-sub
-	subscribers map[string][](chan string) // Maps publisher channel name to list of receiving clients
-	publishers map[net.Conn]([]string) // Maps client to list of subscribed publisher channels
+	subscribers map[string]*Set[chan string] // Maps publisher channel name to set of receiving clients
+	publishers map[net.Conn]*Set[string] // Maps client to set of subscribed publisher channels
 
 }
 
 type StreamEntry struct { 
 	id string 
 	values map[string]string 
+}
+
+type Set[T comparable] struct {
+	set map[T]struct{}
+	length int
+}
+
+func (s *Set[T]) Add(entry T) {
+	if _, ok := s.set[entry]; ok {
+		s.set[entry] = struct{}{}
+		s.length++
+	}
+}
+
+func (s *Set[T]) Remove(entry T) {
+	if _, ok := s.set[entry]; ok {
+		delete(s.set, entry)
+		s.length--
+	}
 }
 
 func (s *StreamEntry) GetMillis() int {
@@ -85,6 +104,8 @@ func (db *DB) SetString(key string, val string) {
 	
 
 }
+
+
 
 func (db *DB) TimedSetString(key string, val string, duration time.Duration) {
 	// Make sure no other data type has the same key
@@ -172,7 +193,7 @@ func NewDB() *DB {
 		xreadIdWaiters: make(map[string](map[string]([]chan *StreamEntry))),
 		xreadAllWaiters: make(map[string]([]chan *StreamEntry)),
 		transactions: make(map[net.Conn]([][]byte)),
-		subscribers: make(map[string][]chan string),
-		publishers: make(map[net.Conn][]string),
+		subscribers: make(map[string]*Set[chan string]),
+		publishers: make(map[net.Conn]*Set[string]),
 	}
 }

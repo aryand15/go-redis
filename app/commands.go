@@ -105,25 +105,21 @@ func (h *CommandHandler) HandleSUBSCRIBE(args []*RESPData, conn net.Conn) (*RESP
 	h.db.mu.Lock()
 
 	// Add channel to publisher client list
-	clientList, ok := h.db.subscribers[pubChanName]
-	if !ok {
-		h.db.subscribers[pubChanName] = make([]chan string, 0)
+	
+	if _, ok := h.db.subscribers[pubChanName]; !ok {
+		h.db.subscribers[pubChanName] = &Set[chan string]{set: make(map[chan string]struct{}), length: 0}
 	}
-
-	clientList = append(clientList, ch)
-	h.db.subscribers[pubChanName] = clientList
+	h.db.subscribers[pubChanName].Add(ch)
 
 	// Add publisher channel name to list of subscribed channels for this client
-	subscriptionList, ok := h.db.publishers[conn]
-	if !ok {
-		h.db.publishers[conn] = make([]string, 0)
+	
+	if _, ok := h.db.publishers[conn]; !ok {
+		h.db.publishers[conn] = &Set[string]{set: make(map[string]struct{}), length: 0}
 	}
-
-	subscriptionList = append(subscriptionList, pubChanName)
-	h.db.publishers[conn] = subscriptionList
+	h.db.publishers[conn].Add(pubChanName)
 
 	// Save number of subscriptions for output
-	numSubscribed := len(h.db.publishers[conn])
+	numSubscribed := h.db.publishers[conn].length
 
 	h.db.mu.Unlock()
 
@@ -972,6 +968,34 @@ func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn, inTransaction
 		res, ok = h.HandleXRANGE(request)
 	case "xread":
 		res, ok = h.HandleXREAD(request)
+	}
+
+	if !ok || res == nil {
+		return nil, false
+	}
+
+	return EncodeToRESP(res)
+}
+
+func (h *CommandHandler) HandleSubscribeMode(respData *RESPData, conn net.Conn) ([]byte, bool) {
+	request := respData.ListRESPData
+	firstWord := strings.ToLower(string(request[0].Data))
+
+	var res *RESPData
+	var ok bool
+
+	switch firstWord {
+	case "subscribe":
+		res, ok = h.HandleSUBSCRIBE(request, conn)
+	case "unsubscribe":
+	case "psubscribe":
+	case "punsubscribe":
+	case "ping":
+	case "quit":
+	default:
+		err := fmt.Sprintf("ERR can't execute '%s': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context", firstWord)
+		res = convertSimpleErrorToRESP(err)
+		ok = true
 	}
 
 	if !ok || res == nil {
