@@ -71,6 +71,8 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) (*RESPData,
 func (h *CommandHandler) HandleMULTI(args []*RESPData, conn net.Conn) (*RESPData, bool) {
 	// Create new transaction if nonexistent
 	fmt.Println("in handler")
+	fmt.Printf("Checking transaction for conn %v\n", conn)
+	fmt.Printf("Current transactions: %v\n", h.db.transactions)
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
 	if _, ok := h.db.transactions[conn]; !ok {
@@ -78,8 +80,9 @@ func (h *CommandHandler) HandleMULTI(args []*RESPData, conn net.Conn) (*RESPData
 		h.db.transactions[conn] = make([][]byte, 0)
 		return &RESPData{Type: SimpleString, Data: []byte("+OK\r\n")}, true
 	}
-			
+	
 	// Cannot call MULTI while already in a transaction
+	fmt.Printf("Transaction already exists for conn %v\n", conn)
 	return nil, false
 	
 
