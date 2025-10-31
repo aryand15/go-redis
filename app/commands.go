@@ -99,7 +99,7 @@ func (h *CommandHandler) HandleSUBSCRIBE(args []*RESPData, conn net.Conn) (*RESP
 		return nil, false
 	}
 
-	pubChanName := args[2].String()
+	pubChanName := args[1].String()
 	ch := make(chan string)
 
 	h.db.mu.Lock()
