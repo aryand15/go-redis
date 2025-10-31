@@ -14,6 +14,16 @@ const (
 	Array        = '*'
 )
 
+// Common RESP responses
+var (
+	RespOK         = []byte("+OK\r\n")
+	RespPong       = []byte("+PONG\r\n")
+	RespNullString = []byte("$-1\r\n")
+	RespEmptyArr   = []byte("*0\r\n")
+	RespNullArr    = []byte("*-1\r\n")
+	RespNoneString = []byte("+none\r\n")
+)
+
 func (t RESPType) Valid() bool {
 	switch t {
 	case SimpleString, SimpleError, Integer, BulkString, Array:
@@ -203,7 +213,7 @@ func EncodeToRESP(r *RESPData) (b []byte, success bool) {
 		return []byte(s), true
 	case BulkString:
 		if r.Data == nil {
-			return []byte("$-1\r\n"), true
+			return RespNullString, true
 		}
 
 		strlen := len(r.Data)
@@ -211,7 +221,7 @@ func EncodeToRESP(r *RESPData) (b []byte, success bool) {
 		return []byte(s), true
 	case Array:
 		if r.ListRESPData == nil {
-			return []byte("*-1\r\n"), true
+			return RespNullArr, true
 		}
 		arrlen := len(r.ListRESPData)
 		s := "*" + strconv.Itoa(arrlen) + "\r\n"

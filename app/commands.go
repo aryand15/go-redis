@@ -9,15 +9,7 @@ import (
 	"net"
 )
 
-// Common RESP responses
-var (
-	respOK         = []byte("+OK\r\n")
-	respPong       = []byte("+PONG\r\n")
-	respNullString = []byte("$-1\r\n")
-	respEmptyArr   = []byte("*0\r\n")
-	respNullArr    = []byte("*-1\r\n")
-	respNoneString = []byte("+none\r\n")
-)
+
 
 type CommandHandler struct {
 	db *DB
@@ -27,18 +19,18 @@ func NewCommandHandler(db *DB) *CommandHandler {
 	return &CommandHandler{db: db}
 }
 
-func (h *CommandHandler) HandleECHO(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleECHO(args []*RESPData) (*RESPData, bool) {
 	if len(args) < 2 {
 		return nil, false
 	}
-	return EncodeToRESP(&RESPData{Type: BulkString, Data: args[1].Data})
+	return &RESPData{Type: BulkString, Data: args[1].Data}, true
 }
 
-func (h *CommandHandler) HandlePING() ([]byte, bool) {
-	return respPong, true
+func (h *CommandHandler) HandlePING() (*RESPData, bool) {
+	return &RESPData{Type: SimpleString, Data: RespPong}, true
 }
 
-func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) ([]byte, bool) {
+func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) (*RESPData, bool) {
 	if len(args) != 1 {
 		return nil, false
 	}
@@ -49,7 +41,7 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) ([]byte, bo
 	// Check if connection already in the process of making transaction; if not, return error
 	commands, ok := h.db.transactions[conn];
 	if !ok {
-		return []byte("-ERR EXEC without MULTI\r\n"), true
+		return &RESPData{Type: SimpleString, Data: []byte("-ERR EXEC without MULTI\r\n")}, true
 	}
 
 	// Make sure to remove conn from map of transactions at the end
@@ -57,17 +49,59 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) ([]byte, bo
 
 	// If empty transaction, return empty array
 	if len(commands) == 0 {
-		return []byte("*0\r\n"), true
+		return &RESPData{Type: SimpleString, Data: []byte("*0\r\n")}, true
 	}
 
+	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+	for _, c := range commands {
+		_, respCommand, _ := DecodeFromRESP(c)
+		res, succ := h.Handle(respCommand, conn)
+		if !succ {
+			return nil, false
+		}
+		_, respRes, _ := DecodeFromRESP(res)
+		ret.ListRESPData = append(ret.ListRESPData, respRes)
+
+	}
+
+
+	return ret, true
+}
+
+func (h *CommandHandler) HandleMULTI(args []*RESPData, conn net.Conn) (*RESPData, bool) {
+	// Create new transaction if nonexistent
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+	if _, ok := h.db.transactions[conn]; !ok {
+		h.db.transactions[conn] = make([][]byte, 0)
+		return &RESPData{Type: SimpleString, Data: []byte("+OK\r\n")}, true
+	}
+			
+	// Cannot call MULTI while already in a transaction
 	return nil, false
+	
+
+}
+
+func (h *CommandHandler) HandleDISCARD(args []*RESPData, conn net.Conn) (*RESPData, bool) {
+	h.db.mu.Lock()
+	defer h.db.mu.Unlock()
+
+	// Error if not in transaction
+	if _, ok := h.db.transactions[conn]; !ok {
+		return &RESPData{Type: SimpleError, Data: []byte("-ERR DISCARD without MULTI\r\n")}, true
+	}
+
+	// Otherwise, simply delete the transaction
+	delete(h.db.transactions, conn)
+	return &RESPData{Type: SimpleString, Data: RespOK}, true
 }
 
 
 
 
 
-func (h *CommandHandler) HandleSET(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleSET(args []*RESPData) (*RESPData, bool) {
 	if len(args) != 3 && len(args) != 5 {
 		return nil, false
 	}
@@ -93,10 +127,10 @@ func (h *CommandHandler) HandleSET(args []*RESPData) ([]byte, bool) {
 	} else if timeOption == "PX" {
 		h.db.TimedSetString(key, val, time.Duration(duration)*time.Millisecond)
 	}
-	return respOK, true
+	return &RESPData{Type: SimpleString, Data: RespOK}, true
 }
 
-func (h *CommandHandler) HandleGET(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleGET(args []*RESPData) (*RESPData, bool) {
 	if len(args) < 2 {
 		return nil, false
 	}
@@ -106,12 +140,12 @@ func (h *CommandHandler) HandleGET(args []*RESPData) ([]byte, bool) {
 	defer h.db.mu.Unlock()
 	val, ok := h.db.GetString(key)
 	if !ok {
-		return respNullString, true
+		return &RESPData{Type: BulkString}, true
 	}
-	return EncodeToRESP(ConvertBulkStringToRESP(val))
+	return ConvertBulkStringToRESP(val), true
 }
 
-func (h *CommandHandler) HandleINCR(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleINCR(args []*RESPData) (*RESPData, bool) {
 	if len(args) != 2 {
 		return nil, false
 	}
@@ -134,7 +168,7 @@ func (h *CommandHandler) HandleINCR(args []*RESPData) ([]byte, bool) {
 	
 	// Otherwise if the key exists but can't be represented as a 64-bit integer, return an error
 	} else if intVal, err := strconv.ParseInt(val, 10, 64); err != nil {
-		return []byte("-ERR value is not an integer or out of range\r\n"), true
+		return &RESPData{Type: SimpleError, Data: []byte("-ERR value is not an integer or out of range\r\n")}, true
 	
 
 	// Otherwise we can increment the key
@@ -143,10 +177,10 @@ func (h *CommandHandler) HandleINCR(args []*RESPData) ([]byte, bool) {
 	}
 
 	h.db.SetString(key, strconv.FormatInt(newVal, 10))
-	return EncodeToRESP(ConvertIntToRESP(newVal))
+	return ConvertIntToRESP(newVal), true
 }
 
-func (h *CommandHandler) HandleRPUSH(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleRPUSH(args []*RESPData) (*RESPData, bool) {
 	if len(args) < 3 {
 		return nil, false
 	}
@@ -182,11 +216,11 @@ func (h *CommandHandler) HandleRPUSH(args []*RESPData) ([]byte, bool) {
 	}
 
 	// Return length of array
-	return EncodeToRESP(ConvertIntToRESP(int64(len(h.db.listData[key]))))
+	return ConvertIntToRESP(int64(len(h.db.listData[key]))), true
 
 }
 
-func (h *CommandHandler) HandleLPUSH(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleLPUSH(args []*RESPData) (*RESPData, bool) {
 	if len(args) < 3 {
 		return nil, false
 	}
@@ -223,11 +257,11 @@ func (h *CommandHandler) HandleLPUSH(args []*RESPData) ([]byte, bool) {
 		h.db.blpopWaiters[key] = h.db.blpopWaiters[key][1:] // Remove client off the queue
 	}
 
-	return EncodeToRESP(ConvertIntToRESP(int64(len(h.db.listData[key]))))
+	return ConvertIntToRESP(int64(len(h.db.listData[key]))), true
 
 }
 
-func (h *CommandHandler) HandleLRANGE(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleLRANGE(args []*RESPData) (*RESPData, bool) {
 	if len(args) != 4 {
 		return nil, false
 	}
@@ -238,7 +272,7 @@ func (h *CommandHandler) HandleLRANGE(args []*RESPData) ([]byte, bool) {
 	// If list doesn't exist, return empty array
 	val, ok := h.db.GetList(string(args[1].Data))
 	if !ok {
-		return respEmptyArr, true
+		return &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}, true
 	}
 
 	arrLen := len(val)
@@ -255,14 +289,14 @@ func (h *CommandHandler) HandleLRANGE(args []*RESPData) ([]byte, bool) {
 	}
 	stop = min(stop, arrLen-1)
 	if start >= arrLen || start < 0 || stop < start || arrLen == 0 {
-		return respEmptyArr, true
+		return &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}, true
 	}
 
-	return EncodeToRESP(convertListToRESP(val[start : stop+1]))
+	return convertListToRESP(val[start : stop+1]), true
 
 }
 
-func (h *CommandHandler) HandleLLEN(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleLLEN(args []*RESPData) (*RESPData, bool) {
 	if len(args) != 2 {
 		return nil, false
 	}
@@ -275,15 +309,15 @@ func (h *CommandHandler) HandleLLEN(args []*RESPData) ([]byte, bool) {
 	// If list doesn't exist, return 0
 	arrResp, ok := h.db.GetList(arrName)
 	if !ok  {
-		return EncodeToRESP(ConvertIntToRESP(0))
+		return ConvertIntToRESP(0), true
 	}
 
 	// Return length of list
-	return EncodeToRESP(ConvertIntToRESP(int64(len(arrResp))))
+	return ConvertIntToRESP(int64(len(arrResp))), true
 
 }
 
-func (h *CommandHandler) HandleBLPOP(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleBLPOP(args []*RESPData) (*RESPData, bool) {
 	if len(args) != 3 {
 		return nil, false
 	}
@@ -306,7 +340,7 @@ func (h *CommandHandler) HandleBLPOP(args []*RESPData) ([]byte, bool) {
 		poppedVal := data[0]
 		h.db.listData[key] = data[1:]
 		h.db.mu.Unlock()
-		return EncodeToRESP(convertListToRESP([]string{key, poppedVal}))
+		return convertListToRESP([]string{key, poppedVal}), true
 	}
 
 	// Add client to list of blocked clients on this array
@@ -323,7 +357,7 @@ func (h *CommandHandler) HandleBLPOP(args []*RESPData) ([]byte, bool) {
 		h.db.mu.Lock()
 		defer h.db.mu.Unlock()
 		h.db.listData[key] = h.db.listData[key][1:] // Remove the popped element from the array
-		return EncodeToRESP(convertListToRESP([]string{key, poppedVal}))
+		return convertListToRESP([]string{key, poppedVal}), true
 	}
 
 	// Otherwise block until channel receives value or timeout occurs
@@ -341,20 +375,20 @@ func (h *CommandHandler) HandleBLPOP(args []*RESPData) ([]byte, bool) {
 				break
 			}
 		}
-		return respNullArr, true
+		return &RESPData{Type: Array, ListRESPData: nil}, true
 
 	case poppedVal := <-c:
 		// Successfully received popped value
 		h.db.mu.Lock()
 		defer h.db.mu.Unlock()
 		h.db.listData[key] = h.db.listData[key][1:] // Remove the popped element from the array
-		return EncodeToRESP(convertListToRESP([]string{key, poppedVal}))
+		return convertListToRESP([]string{key, poppedVal}), true
 
 	}
 
 }
 
-func (h *CommandHandler) HandleLPOP(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleLPOP(args []*RESPData) (*RESPData, bool) {
 	if len(args) != 2 && len(args) != 3 {
 		return nil, false
 	}
@@ -366,7 +400,7 @@ func (h *CommandHandler) HandleLPOP(args []*RESPData) ([]byte, bool) {
 	// Return null string if array doesn't exist
 	arrResp, ok := h.db.GetList(arrName)
 	if !ok {
-		return respNullString, true
+		return &RESPData{Type: BulkString}, true
 	}
 
 	// Parse optional number of elements to remove
@@ -392,14 +426,14 @@ func (h *CommandHandler) HandleLPOP(args []*RESPData) ([]byte, bool) {
 
 	// Return single element if only one was removed
 	if numToRemove == 1 {
-		return EncodeToRESP(ConvertBulkStringToRESP(ret[0]))
+		return ConvertBulkStringToRESP(ret[0]), true
 	}
 	// Return array of removed elements otherwise
-	return EncodeToRESP(convertListToRESP(ret))
+	return convertListToRESP(ret), true
 
 }
 
-func (h *CommandHandler) HandleTYPE(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleTYPE(args []*RESPData) (*RESPData, bool) {
 	if len(args) != 2 {
 		return nil, false
 	}
@@ -408,22 +442,22 @@ func (h *CommandHandler) HandleTYPE(args []*RESPData) ([]byte, bool) {
 	defer h.db.mu.Unlock()
 	_, isString := h.db.GetString(args[1].String());
 	if isString {
-		return []byte("+string\r\n"), true
+		return &RESPData{Type: SimpleString, Data: []byte("+string\r\n")}, true
 	}
 	_, isList := h.db.GetList(args[1].String());
 	if isList {
-		return []byte("+list\r\n"), true
+		return &RESPData{Type: SimpleString, Data: []byte("+list\r\n")}, true
 	}
 
 	_, isStream := h.db.GetStream(args[1].String());
 	if isStream {
-		return []byte("+stream\r\n"), true
+		return &RESPData{Type: SimpleString, Data: []byte("+stream\r\n")}, true
 	}
 
-	return respNoneString, true
+	return &RESPData{Type: SimpleString, Data: RespNoneString}, true
 }
 
-func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleXADD(args []*RESPData) (*RESPData, bool) {
 	if len(args) < 5 || len(args) % 2 == 0 {
 		return nil, false
 	}
@@ -450,7 +484,7 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 
 	// Cannot be 0-0
 	if id == "0-0" {
-		return []byte("-ERR The ID specified in XADD must be greater than 0-0\r\n"), true
+		return &RESPData{Type: SimpleError, Data: []byte("-ERR The ID specified in XADD must be greater than 0-0\r\n")}, true
 	// Edge case: no previous entries and millis is 0
 	} else if id == "0-*" && len(stream) == 0 {
 		id = "0-1"
@@ -468,7 +502,7 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 		return nil, false
 	// Make sure millis is greater than or equal to previous entry's millis
 	} else if len(stream) > 0 && millis < stream[len(stream)-1].GetMillis() {
-		return []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"), true
+		return &RESPData{Type: SimpleError, Data: []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")}, true
 	// Handle int-* case
 	} else if idParts[1] == "*" && len(stream) > 0 && millis == stream[len(stream)-1].GetMillis() {
 		id = fmt.Sprintf("%d-%d", millis, stream[len(stream)-1].GetSeqNum()+1)
@@ -476,7 +510,7 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 		id = fmt.Sprintf("%d-0", millis)
 	// Make sure seqNum is greater than previous entry's seqNum if millis are equal
 	} else if len(stream) > 0 && seqNum <= stream[len(stream)-1].GetSeqNum() && millis == stream[len(stream)-1].GetMillis() {
-		return []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"), true
+		return &RESPData{Type: SimpleError, Data: []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")}, true
 	} else {
 		// ID is valid, do nothing
 	} 
@@ -512,7 +546,7 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) ([]byte, bool) {
 	}
 
 	// Return the ID of the stream that was just added
-	return EncodeToRESP(ConvertBulkStringToRESP(id))
+	return ConvertBulkStringToRESP(id), true
 }
 
 func generateNewStreamID(prevId string) string {
@@ -533,7 +567,7 @@ func generateNewStreamID(prevId string) string {
 	return fmt.Sprintf("%d-%d", currMillis, seqNum)
 }
 
-func (h *CommandHandler) HandleXRANGE(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleXRANGE(args []*RESPData) (*RESPData, bool) {
 	if len(args) != 4 {
 		return nil, false
 	}
@@ -582,7 +616,7 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) ([]byte, bool) {
 	
 	// If first ID is greater than second, return empty list right away
 	if CompareStreamIDs(id1, id2) == 1 {
-		return EncodeToRESP(ret)
+		return ret, true
 	}
 
 
@@ -607,11 +641,11 @@ func (h *CommandHandler) HandleXRANGE(args []*RESPData) ([]byte, bool) {
 		ret.ListRESPData = append(ret.ListRESPData, stream[i].RESPData())
 	}
 
-	return EncodeToRESP(ret)
+	return ret, true
 
 }
 
-func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
+func (h *CommandHandler) HandleXREAD(args []*RESPData) (*RESPData, bool) {
 	if len(args) < 4 || len(args) % 2 == 1 || (strings.ToLower(args[1].String()) != "streams" && strings.ToLower(args[1].String()) != "block") {
 		return nil, false
 	} else if strings.ToLower(args[1].String()) == "block" && strings.ToLower(args[3].String()) != "streams" {
@@ -808,11 +842,11 @@ func (h *CommandHandler) HandleXREAD(args []*RESPData) ([]byte, bool) {
 
 	// If no streams had any relevant entries, return null array
 	if len(ret.ListRESPData) == 0 {
-		return respNullArr, true
+		return &RESPData{Type: Array}, true
 	}
 	
 
-	return EncodeToRESP(ret)
+	return ret, true
 }
 
 // CompareStreamIDs compares two valid stream IDs.
@@ -844,52 +878,74 @@ func CompareStreamIDs(idA string, idB string) (int) {
 func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn) ([]byte, bool) {
 	
 	request := respData.ListRESPData
-	command := string(request[0].Data)
+	firstWord := string(request[0].Data)
 
-	switch strings.ToLower(command) {
+	var res *RESPData
+	var ok bool
+
+	// If the command is being done under a transaction, and isn't exec, multi, or discard, simply queue it, don't execute it.
+	if word := strings.ToLower(firstWord); word != "exec" && word != "multi" && word != "discard" {
+		h.db.mu.Lock()
+		if _, ok := h.db.transactions[conn]; ok {
+			respRequest, _ := EncodeToRESP(respData)
+			h.db.transactions[conn] = append(h.db.transactions[conn], respRequest)
+			h.db.mu.Unlock()
+			return []byte("+QUEUED\r\n"), true
+		}
+		h.db.mu.Unlock()
+	}
+
+	// Otherwise, proceed as normal and handle the message
+	switch strings.ToLower(firstWord) {
 	
 	// General
 	case "echo":
-		return h.HandleECHO(request)
+		res, ok = h.HandleECHO(request)
 	case "ping":
-		return h.HandlePING()
+		res, ok = h.HandlePING()
 	case "type":
-		return h.HandleTYPE(request)
+		res, ok = h.HandleTYPE(request)
 	case "exec":
-		return h.HandleEXEC(request, conn)
+		res, ok = h.HandleEXEC(request, conn)
+	case "multi":
+		res, ok = h.HandleMULTI(request, conn)
+	case "discard":
+		res, ok = h.HandleDISCARD(request, conn)
 	
 	// Key-value
 	case "set":
-		return h.HandleSET(request)
+		res, ok = h.HandleSET(request)
 	case "get":
-		return h.HandleGET(request)
+		res, ok = h.HandleGET(request)
 	case "incr":
-		return h.HandleINCR(request)
+		res, ok = h.HandleINCR(request)
 
 	// List
 	case "rpush":
-		return h.HandleRPUSH(request)
+		res, ok = h.HandleRPUSH(request)
 	case "lpush":
-		return h.HandleLPUSH(request)
+		res, ok = h.HandleLPUSH(request)
 	case "lrange":
-		return h.HandleLRANGE(request)
+		res, ok = h.HandleLRANGE(request)
 	case "llen":
-		return h.HandleLLEN(request)
+		res, ok = h.HandleLLEN(request)
 	case "lpop":
-		return h.HandleLPOP(request)
+		res, ok = h.HandleLPOP(request)
 	case "blpop":
-		return h.HandleBLPOP(request)
+		res, ok = h.HandleBLPOP(request)
 	
 	// Stream
 	case "xadd":
-		return h.HandleXADD(request)
+		res, ok = h.HandleXADD(request)
 	case "xrange":
-		return h.HandleXRANGE(request)
+		res, ok = h.HandleXRANGE(request)
 	case "xread":
-		return h.HandleXREAD(request)
-	
+		res, ok = h.HandleXREAD(request)
+	}
 
-	default:
+	if !ok || res == nil {
 		return nil, false
 	}
+
+	return EncodeToRESP(res)
 }

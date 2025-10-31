@@ -5,7 +5,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"strings"
 )
 
 
@@ -64,42 +63,19 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 
 		_, respData, success := DecodeFromRESP(message)
 		
-		if !success || respData.Type != Array {
+		if !success || respData.Type != Array || len(respData.ListRESPData) == 0 {
 			fmt.Println("Unable to parse RESP request")
-		} else if len(respData.ListRESPData) == 0 {
-			response, ok = nil, false
-		
-		// Handle MULTI command
-		} else if chunks := respData.ListRESPData; len(chunks) == 1 && strings.ToLower(chunks[0].String()) == "multi" {
-			fmt.Println("In the outer if statement")
-			// Create new transaction if nonexistent
-			if _, ok = handler.db.transactions[conn]; !ok {
-				fmt.Println("In the important if statement")
-				handler.db.transactions[conn] = make([][]byte, 0)
-				response, ok = []byte("+OK\r\n"), true
-			
-			// Cannot call MULTI while already in a transaction
-			} else {
-				response, ok = nil, false
-			}
-			
-			handler.db.mu.Unlock()
-
-		// If command is in a transaction and is NOT "exec", queue it instead of actually handling it
-		} else if _, ok = handler.db.transactions[conn]; ok && strings.ToLower(chunks[0].String()) != "exec" {
-			handler.db.transactions[conn] = append(handler.db.transactions[conn], message)
-			handler.db.mu.Unlock()
-			response = []byte("+QUEUED\r\n")
-		
-		// Otherwise, proceed as normal and handle the message
-		} else {
-			handler.db.mu.Unlock()
-			response, ok = handler.Handle(respData, conn)
 		}
 
-		fmt.Println("OK:", ok)
+		response, ok = handler.Handle(respData, conn)
+
 		if !ok {
 			fmt.Println("Error handling message")
+
+			// Remove connection from transactions map if it exists
+			handler.db.mu.Lock()
+			delete(handler.db.transactions, conn)
+			handler.db.mu.Unlock()
 			return
 		}
 
