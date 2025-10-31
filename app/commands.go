@@ -56,7 +56,7 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) (*RESPData,
 	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
 	for _, c := range commands {
 		_, respCommand, _ := DecodeFromRESP(c)
-		res, succ := h.Handle(respCommand, conn)
+		res, succ := h.Handle(respCommand, conn, false)
 		if !succ {
 			return nil, false
 		}
@@ -881,7 +881,7 @@ func CompareStreamIDs(idA string, idB string) (int) {
 	}
 }
 
-func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn) ([]byte, bool) {
+func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn, inTransaction bool) ([]byte, bool) {
 	fmt.Println("about to handle")
 	
 	request := respData.ListRESPData
@@ -891,7 +891,7 @@ func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn) ([]byte, bool
 	var ok bool
 
 	// If the command is being done under a transaction, and isn't exec, multi, or discard, simply queue it, don't execute it.
-	if firstWord != "exec" && firstWord != "multi" && firstWord != "discard" {
+	if inTransaction && firstWord != "exec" && firstWord != "multi" && firstWord != "discard" {
 		h.db.mu.Lock()
 		if _, ok := h.db.transactions[conn]; ok {
 			respRequest, _ := EncodeToRESP(respData)
