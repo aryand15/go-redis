@@ -41,14 +41,14 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) (*RESPData,
 	if !ok {
 		delete(h.db.transactions, conn)
 		h.db.mu.Unlock()
-		return &RESPData{Type: SimpleString, Data: []byte("-ERR EXEC without MULTI\r\n")}, true
+		return &RESPData{Type: SimpleError, Data: []byte("ERR EXEC without MULTI")}, true
 	}
 
 	// If empty transaction, return empty array
 	if len(commands) == 0 {
 		delete(h.db.transactions, conn)
 		h.db.mu.Unlock()
-		return &RESPData{Type: SimpleString, Data: []byte("*0\r\n")}, true
+		return &RESPData{Type: SimpleString}, true
 	}
 
 	h.db.mu.Unlock()
@@ -71,19 +71,14 @@ func (h *CommandHandler) HandleEXEC(args []*RESPData, conn net.Conn) (*RESPData,
 
 func (h *CommandHandler) HandleMULTI(args []*RESPData, conn net.Conn) (*RESPData, bool) {
 	// Create new transaction if nonexistent
-	fmt.Println("in handler")
-	fmt.Printf("Checking transaction for conn %v\n", conn)
-	fmt.Printf("Current transactions: %v\n", h.db.transactions)
 	h.db.mu.Lock()
 	defer h.db.mu.Unlock()
 	if _, ok := h.db.transactions[conn]; !ok {
-		fmt.Println("going to create transaction data")
 		h.db.transactions[conn] = make([][]byte, 0)
 		return &RESPData{Type: SimpleString, Data: []byte("OK")}, true
 	}
 	
 	// Cannot call MULTI while already in a transaction
-	fmt.Printf("Transaction already exists for conn %v\n", conn)
 	return nil, false
 	
 
@@ -95,7 +90,7 @@ func (h *CommandHandler) HandleDISCARD(args []*RESPData, conn net.Conn) (*RESPDa
 
 	// Error if not in transaction
 	if _, ok := h.db.transactions[conn]; !ok {
-		return &RESPData{Type: SimpleError, Data: []byte("-ERR DISCARD without MULTI\r\n")}, true
+		return &RESPData{Type: SimpleError, Data: []byte("ERR DISCARD without MULTI")}, true
 	}
 
 	// Otherwise, simply delete the transaction
@@ -174,7 +169,7 @@ func (h *CommandHandler) HandleINCR(args []*RESPData) (*RESPData, bool) {
 	
 	// Otherwise if the key exists but can't be represented as a 64-bit integer, return an error
 	} else if intVal, err := strconv.ParseInt(val, 10, 64); err != nil {
-		return &RESPData{Type: SimpleError, Data: []byte("-ERR value is not an integer or out of range\r\n")}, true
+		return &RESPData{Type: SimpleError, Data: []byte("ERR value is not an integer or out of range")}, true
 	
 
 	// Otherwise we can increment the key
@@ -448,19 +443,19 @@ func (h *CommandHandler) HandleTYPE(args []*RESPData) (*RESPData, bool) {
 	defer h.db.mu.Unlock()
 	_, isString := h.db.GetString(args[1].String());
 	if isString {
-		return &RESPData{Type: SimpleString, Data: []byte("+string\r\n")}, true
+		return &RESPData{Type: SimpleString, Data: []byte("string")}, true
 	}
 	_, isList := h.db.GetList(args[1].String());
 	if isList {
-		return &RESPData{Type: SimpleString, Data: []byte("+list\r\n")}, true
+		return &RESPData{Type: SimpleString, Data: []byte("list")}, true
 	}
 
 	_, isStream := h.db.GetStream(args[1].String());
 	if isStream {
-		return &RESPData{Type: SimpleString, Data: []byte("+stream\r\n")}, true
+		return &RESPData{Type: SimpleString, Data: []byte("stream")}, true
 	}
 
-	return &RESPData{Type: SimpleString, Data: RespNoneString}, true
+	return &RESPData{Type: SimpleString, Data: []byte("none")}, true
 }
 
 func (h *CommandHandler) HandleXADD(args []*RESPData) (*RESPData, bool) {
@@ -490,7 +485,7 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) (*RESPData, bool) {
 
 	// Cannot be 0-0
 	if id == "0-0" {
-		return &RESPData{Type: SimpleError, Data: []byte("-ERR The ID specified in XADD must be greater than 0-0\r\n")}, true
+		return &RESPData{Type: SimpleError, Data: []byte("ERR The ID specified in XADD must be greater than 0-0")}, true
 	// Edge case: no previous entries and millis is 0
 	} else if id == "0-*" && len(stream) == 0 {
 		id = "0-1"
@@ -508,7 +503,7 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) (*RESPData, bool) {
 		return nil, false
 	// Make sure millis is greater than or equal to previous entry's millis
 	} else if len(stream) > 0 && millis < stream[len(stream)-1].GetMillis() {
-		return &RESPData{Type: SimpleError, Data: []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")}, true
+		return &RESPData{Type: SimpleError, Data: []byte("ERR The ID specified in XADD is equal or smaller than the target stream top item")}, true
 	// Handle int-* case
 	} else if idParts[1] == "*" && len(stream) > 0 && millis == stream[len(stream)-1].GetMillis() {
 		id = fmt.Sprintf("%d-%d", millis, stream[len(stream)-1].GetSeqNum()+1)
@@ -516,7 +511,7 @@ func (h *CommandHandler) HandleXADD(args []*RESPData) (*RESPData, bool) {
 		id = fmt.Sprintf("%d-0", millis)
 	// Make sure seqNum is greater than previous entry's seqNum if millis are equal
 	} else if len(stream) > 0 && seqNum <= stream[len(stream)-1].GetSeqNum() && millis == stream[len(stream)-1].GetMillis() {
-		return &RESPData{Type: SimpleError, Data: []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")}, true
+		return &RESPData{Type: SimpleError, Data: []byte("ERR The ID specified in XADD is equal or smaller than the target stream top item")}, true
 	} else {
 		// ID is valid, do nothing
 	} 
@@ -882,7 +877,6 @@ func CompareStreamIDs(idA string, idB string) (int) {
 }
 
 func (h *CommandHandler) Handle(respData *RESPData, conn net.Conn, inTransaction bool) ([]byte, bool) {
-	fmt.Println("about to handle")
 	
 	request := respData.ListRESPData
 	firstWord := strings.ToLower(string(request[0].Data))
