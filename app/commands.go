@@ -78,7 +78,7 @@ func (h *CommandHandler) HandleMULTI(args []*RESPData, conn net.Conn) (*RESPData
 	if _, ok := h.db.transactions[conn]; !ok {
 		fmt.Println("going to create transaction data")
 		h.db.transactions[conn] = make([][]byte, 0)
-		return &RESPData{Type: SimpleString, Data: []byte("+OK\r\n")}, true
+		return &RESPData{Type: SimpleString, Data: []byte("OK")}, true
 	}
 	
 	// Cannot call MULTI while already in a transaction
