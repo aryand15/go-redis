@@ -22,7 +22,7 @@ cd go-redis
 
 ### 2. Run the server
 ```bash
-go run app/main.go
+go run ./app
 ```
 
 ### 3. Connect using Redis CLI (for now; custom CLI coming soon!)
