@@ -85,7 +85,7 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 
 	for {
 		
-		var response []byte
+		var response = make([]byte, 0)
 		ok := false
 
 		if inSubscribeMode {
@@ -112,9 +112,8 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 				if !sentOk {	// Channel is closed
 					return
 				}
-				response = []byte(publisherInput)
-				ok = true
-
+				
+				response, ok = EncodeToRESP(ConvertBulkStringToRESP(publisherInput))
 			}
 		} else {
 
@@ -156,7 +155,6 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 		}
 
 		
-
 		if _, err := conn.Write(response); err != nil {
 			fmt.Printf("Error writing response: %v\n", err)
 			return
