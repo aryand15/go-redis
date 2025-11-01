@@ -32,8 +32,9 @@ type DB struct {
 	transactions map[net.Conn]([][]byte)
 
 	// Pub-sub
-	subscribers map[string]*Set[chan string] // Maps publisher channel name to set of receiving clients
+	subscribers map[string]*Set[net.Conn] // Maps publisher channel name to set of receiving clients
 	publishers map[net.Conn]*Set[string] // Maps client to set of subscribed publisher channels
+	receivers map[net.Conn]chan string // Each client gets their own channel
 
 }
 
@@ -193,7 +194,8 @@ func NewDB() *DB {
 		xreadIdWaiters: make(map[string](map[string]([]chan *StreamEntry))),
 		xreadAllWaiters: make(map[string]([]chan *StreamEntry)),
 		transactions: make(map[net.Conn]([][]byte)),
-		subscribers: make(map[string]*Set[chan string]),
+		subscribers: make(map[string]*Set[net.Conn]),
 		publishers: make(map[net.Conn]*Set[string]),
+		receivers: make(map[net.Conn]chan string),
 	}
 }

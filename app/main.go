@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"strings"
+	
 )
 
 
@@ -42,42 +42,95 @@ func startServer(handler *CommandHandler) error {
 }
 
 func handleConn(conn net.Conn, handler *CommandHandler) {
-	defer conn.Close()
-	buf := make([]byte, bufferSize)
+	// Cleanup function after client disconnects
+	defer func() {
+		// Remove client from publisher, subscriber, and receiver lists
+		handler.db.mu.Lock()
+		if _, ok := handler.db.publishers[conn]; ok {
+			for topic := range handler.db.publishers[conn].set {
+        		handler.db.subscribers[topic].Remove(conn)
+			}
+		}
+		
+		delete(handler.db.publishers, conn)
+		delete(handler.db.receivers, conn)
+
+
+
+		handler.db.mu.Unlock()
+
+		// Close TCP connection
+		conn.Close()
+	}()
+	
 	inTransaction := false
 	inSubscribeMode := false
 
-	for {
-		n, err := conn.Read(buf)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			fmt.Printf("Error reading from connection: %v\n", err)
-			return
-		}
+	clientInput := make(chan []byte)
 
+	go func() {
+		buf := make([]byte, bufferSize)
+		for {
+			n, err := conn.Read(buf)
+			if err != nil {
+				close(clientInput)
+				return
+			}
+			data := make([]byte, n)
+			copy(data, buf[:n])
+			clientInput <- data
+
+		}
+	}()
+
+	for {
+		
 		var response []byte
 		ok := false
-		message := buf[:n]
-
-		_, respData, success := DecodeFromRESP(message)
-		
-		if !success || respData.Type != Array || len(respData.ListRESPData) == 0 {
-			fmt.Println("Unable to parse RESP request")
-			return
-		}
-
-		firstWord := strings.ToLower(string(respData.ListRESPData[0].Data))
 
 		if inSubscribeMode {
 
-			response, ok = handler.HandleSubscribeMode(respData, conn)
-			if ok && firstWord == "quit" {
-				inSubscribeMode = false
+			select {
+			case message, sentOk := <-clientInput:
+
+				if !sentOk {	// Error reading client input buffer
+                	return 
+            	}
+				_, respData, success := DecodeFromRESP(message)
+		
+				if !success || respData.Type != Array || len(respData.ListRESPData) == 0 {
+					fmt.Println("Unable to parse RESP request")
+					return
+				}
+
+				firstWord := strings.ToLower(string(respData.ListRESPData[0].Data))
+				response, ok = handler.HandleSubscribeMode(respData, conn)
+				if ok && firstWord == "quit" {
+					inSubscribeMode = false
+				}
+			case publisherInput, sentOk := <-handler.db.receivers[conn]:
+				if !sentOk {	// Channel is closed
+					return
+				}
+				response = []byte(publisherInput)
+				ok = true
+
+			}
+		} else {
+
+			message, sentOk := <-clientInput
+			if !sentOk {
+				return
 			}
 
-		} else {
+			_, respData, success := DecodeFromRESP(message)
+			
+			if !success || respData.Type != Array || len(respData.ListRESPData) == 0 {
+				fmt.Println("Unable to parse RESP request")
+				return
+			}
+
+			firstWord := strings.ToLower(string(respData.ListRESPData[0].Data))
 
 			if firstWord == "exec" || firstWord == "discard" {
 				inTransaction = false
@@ -86,11 +139,13 @@ func handleConn(conn net.Conn, handler *CommandHandler) {
 			response, ok = handler.Handle(respData, conn, inTransaction)
 
 
-			if ok && firstWord == "multi" {
+			if firstWord == "multi" {
 				inTransaction = !inTransaction
 			} else if ok && !inSubscribeMode && firstWord == "subscribe" {
 				inSubscribeMode = true
 			}
+
+
 
 		}
 

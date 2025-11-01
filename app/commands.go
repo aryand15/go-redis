@@ -112,9 +112,14 @@ func (h *CommandHandler) HandleSUBSCRIBE(args []*RESPData, conn net.Conn) (*RESP
 	// Add channel to publisher client list
 	
 	if _, ok := h.db.subscribers[pubChanName]; !ok {
-		h.db.subscribers[pubChanName] = &Set[chan string]{set: make(map[chan string]struct{}), length: 0}
+		h.db.subscribers[pubChanName] = &Set[net.Conn]{set: make(map[net.Conn]struct{}), length: 0}
 	}
-	h.db.subscribers[pubChanName].Add(ch)
+	h.db.subscribers[pubChanName].Add(conn)
+
+	// Create a channel (if doesn't exist yet) for this client to receive values
+	if _, ok := h.db.receivers[conn]; !ok {
+		h.db.receivers[conn] = ch
+	}
 
 	// Add publisher channel name to list of subscribed channels for this client
 	
@@ -139,14 +144,24 @@ func (h *CommandHandler) HandlePUBLISH(args []*RESPData) (*RESPData, bool) {
 	}
 
 	channelName := args[1].String()
-	//messageContents := args[2].String()
+	messageContents := args[2].String()
 
 	numSubscribers := 0
 	h.db.mu.Lock()
 	if _, ok := h.db.subscribers[channelName]; ok {
 		numSubscribers = h.db.subscribers[channelName].length
+		for conn := range h.db.subscribers[channelName].set {
+			go func() {
+				select {
+				case h.db.receivers[conn] <- messageContents:
+				default:	// skip slow subscribers
+				}
+				
+			}()
+		}
 	}
 	h.db.mu.Unlock()
+
 
 	return ConvertIntToRESP(int64(numSubscribers)), true
 
