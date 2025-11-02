@@ -138,6 +138,27 @@ func (h *CommandHandler) HandleSUBSCRIBE(args []*RESPData, conn net.Conn) (*RESP
 	return ret, true
 }
 
+func (h *CommandHandler) HandleUNSUBSCRIBE(args []*RESPData, conn net.Conn) (*RESPData, bool) {
+	if len(args) != 2 {
+		return nil, false
+	}
+
+	pubChanName := args[1].String()
+	remSubscribed := 0
+
+	h.db.mu.Lock()
+	if _, ok := h.db.publishers[conn]; ok {
+		h.db.publishers[conn].Remove(pubChanName)
+		remSubscribed = h.db.publishers[conn].length
+	}
+	h.db.mu.Unlock()
+	ret := &RESPData{Type: Array, ListRESPData: make([]*RESPData, 0)}
+	ret.ListRESPData = append(ret.ListRESPData, ConvertBulkStringToRESP("unsubscribe"), ConvertBulkStringToRESP(pubChanName), ConvertIntToRESP(int64(remSubscribed)))
+	return ret, true
+
+
+}
+
 func (h *CommandHandler) HandlePUBLISH(args []*RESPData) (*RESPData, bool) {
 	if len(args) != 3 {
 		return nil, false
@@ -1031,6 +1052,7 @@ func (h *CommandHandler) HandleSubscribeMode(respData *RESPData, conn net.Conn) 
 	case "subscribe":
 		res, ok = h.HandleSUBSCRIBE(request, conn)
 	case "unsubscribe":
+		res, ok = h.HandleUNSUBSCRIBE(request, conn)
 	case "psubscribe":
 	case "punsubscribe":
 	case "ping":
