@@ -6,6 +6,7 @@ import (
 	"github.com/aryand15/go-redis/resp"
 	"fmt"
 	"net"
+	"log"
 )
 
 const (
@@ -18,6 +19,7 @@ func StartServer(handler *commands.CommandHandler) error {
 	if err != nil {
 		return fmt.Errorf("failed to bind to port %s: %v", defaultPort, err)
 	}
+	log.Println("Server started!")
 	defer l.Close()
 
 	for {
@@ -30,6 +32,8 @@ func StartServer(handler *commands.CommandHandler) error {
 }
 
 func handleConn(conn net.Conn, handler *commands.CommandHandler) {
+	log.Printf("New connection from %s", conn.RemoteAddr())
+
 	// Cleanup function after client disconnects
 	defer func() {
 		// Remove client from subscription list of every publisher
@@ -49,6 +53,8 @@ func handleConn(conn net.Conn, handler *commands.CommandHandler) {
 
 		// Close TCP connection
 		conn.Close()
+
+		log.Printf("Connection closed: %s", conn.RemoteAddr())
 	}()
 
 	inTransaction := false

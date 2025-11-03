@@ -1,8 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"os"
+	"log"
 	"github.com/aryand15/go-redis/app/storage"
 	"github.com/aryand15/go-redis/app/commands"
 	"github.com/aryand15/go-redis/app/server"
@@ -13,7 +12,6 @@ func main() {
 	handler := commands.NewCommandHandler(db)
 
 	if err := server.StartServer(handler); err != nil {
-		fmt.Printf("Server error: %v\n", err)
-		os.Exit(1)
+		log.Fatalf("Server error: %v\n", err)
 	}
 }

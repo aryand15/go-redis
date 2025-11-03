@@ -24,6 +24,20 @@ func (h *CommandHandler) GetDB() *storage.DB {
 	return h.db
 }
 
+func (h *CommandHandler) HandleCOMMANDDOCS(args []*resp.RESPData) (*resp.RESPData, bool) {
+    // redis-cli sends COMMAND DOCS when a client connects
+	// Return empty array for now
+
+	if len(args) != 2 || strings.ToLower(args[1].String()) != "docs" {
+		return nil, false
+	}
+
+    return &resp.RESPData{
+        Type:         resp.Array,
+        ListRESPData: []*resp.RESPData{},
+    }, true
+}
+
 func (h *CommandHandler) HandleECHO(args []*resp.RESPData) (*resp.RESPData, bool) {
 	if len(args) < 2 {
 		return nil, false
@@ -989,6 +1003,8 @@ func (h *CommandHandler) Handle(respData *resp.RESPData, conn net.Conn, inTransa
 	switch firstWord {
 
 	// General
+	case "command":
+		res, ok = h.HandleCOMMANDDOCS(request)
 	case "echo":
 		res, ok = h.HandleECHO(request)
 	case "ping":
