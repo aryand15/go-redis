@@ -79,8 +79,8 @@ func handleConn(conn net.Conn, handler *commands.CommandHandler) {
 
 	for {
 
-		var response = make([]byte, 0)
-		ok := false
+		var res *resp.RESPData
+		var err error
 
 		if inSubscribeMode {
 			receiver, _ := handler.GetDB().GetReceiver(conn)
@@ -93,13 +93,13 @@ func handleConn(conn net.Conn, handler *commands.CommandHandler) {
 				_, respData, success := resp.DecodeFromRESP(message)
 
 				if !success || respData.Type != resp.Array || len(respData.ListRESPData) == 0 {
-					fmt.Println("Unable to parse RESP request")
+					fmt.Println("Internal server error: Unable to parse RESP request")
 					return
 				}
 
 				firstWord := strings.ToLower(string(respData.ListRESPData[0].Data))
-				response, ok = handler.HandleSubscribeMode(respData, conn)
-				if ok && firstWord == "quit" {
+				res, err = handler.HandleSubscribeMode(respData, conn)
+				if err == nil && firstWord == "quit" {
 					inSubscribeMode = false
 				}
 			case publisherInput, sentOk := <-receiver:
@@ -107,7 +107,7 @@ func handleConn(conn net.Conn, handler *commands.CommandHandler) {
 					return
 				}
 
-				response, ok = resp.ConvertBulkStringToRESP(publisherInput).EncodeToRESP()
+				res = resp.ConvertBulkStringToRESP(publisherInput)
 			}
 		} else {
 
@@ -119,7 +119,7 @@ func handleConn(conn net.Conn, handler *commands.CommandHandler) {
 			_, respData, success := resp.DecodeFromRESP(message)
 
 			if !success || respData.Type != resp.Array || len(respData.ListRESPData) == 0 {
-				fmt.Println("Unable to parse RESP request")
+				fmt.Println("Internal server error: Unable to parse RESP request")
 				return
 			}
 
@@ -129,23 +129,25 @@ func handleConn(conn net.Conn, handler *commands.CommandHandler) {
 				inTransaction = false
 			}
 
-			response, ok = handler.Handle(respData, conn, inTransaction)
+			res, err = handler.Handle(respData, conn, inTransaction)
 
 			if firstWord == "multi" {
 				inTransaction = !inTransaction
-			} else if ok && !inSubscribeMode && firstWord == "subscribe" {
+			} else if err != nil && !inSubscribeMode && firstWord == "subscribe" {
 				inSubscribeMode = true
 			}
 
 		}
 
-		if !ok {
-			fmt.Println("Error handling message")
-			return
+		var response []byte
+		if err != nil {
+			response, _ = resp.ConvertSimpleErrorToRESP(err.Error()).EncodeToRESP()
+		} else {
+			response, _ = res.EncodeToRESP()
 		}
 
 		if _, err := conn.Write(response); err != nil {
-			fmt.Printf("Error writing response: %v\n", err)
+			fmt.Printf("Internal Server Error: error writing response: %v\n", err)
 			return
 		}
 	}

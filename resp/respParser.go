@@ -19,7 +19,7 @@ var (
 	RespOK         = []byte("+OK\r\n")
 	RespPong       = []byte("+PONG\r\n")
 	RespNullString = []byte("$-1\r\n")
-	RespEmptyArr   = []byte("*0\r\n")
+	RespEmptyList   = []byte("*0\r\n")
 	RespNullArr    = []byte("*-1\r\n")
 	RespNoneString = []byte("+none\r\n")
 )

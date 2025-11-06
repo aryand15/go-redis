@@ -286,7 +286,12 @@ func (db *DB) RemoveBLPOPWaiter(key string, idx int) {
 	if !ok || idx < 0 || idx >= len(waiters) {
 		return
 	}
-	db.blpopWaiters[key] = append(waiters[:idx], waiters[idx+1:]...)
+
+	if len(waiters) == 1 {
+		delete(db.blpopWaiters, key)
+	} else {
+		db.blpopWaiters[key] = append(waiters[:idx], waiters[idx+1:]...)
+	}
 }
 
 func (db *DB) GetStream(key string) ([]*StreamEntry, bool) {
