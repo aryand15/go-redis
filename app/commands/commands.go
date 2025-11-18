@@ -90,6 +90,15 @@ func (h *CommandHandler) HandlePING(args []*resp.RESPData, inSubscribeMode bool)
 
 }
 
+func (h *CommandHandler) HandleQUIT(args []*resp.RESPData) (*resp.RESPData, error) {
+	if err := checkArgCountEquals("quit", args, 1); err != nil {
+		return nil, err
+	}
+
+	return resp.ConvertSimpleStringToRESP("OK"), nil
+
+}
+
 func (h *CommandHandler) HandleEXEC(args []*resp.RESPData, conn net.Conn) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("exec", args, 1); err != nil {
 		return nil, err
@@ -762,9 +771,11 @@ func (h *CommandHandler) HandleXRANGE(args []*resp.RESPData) (*resp.RESPData, er
 	// Validate IDs
 	if id1 == "-" {
 		id1 = "0-0"
-	} else if id2 == "+" {
+	} 
+	if id2 == "+" {
 		id2 = fmt.Sprintf("%d-%d", math.MaxInt, math.MaxInt)
-	} else {
+	} 
+	if args[2].String() != "-" || args[3].String() != "+" {
 		id1Parts := strings.Split(id1, "-")
 		id2Parts := strings.Split(id2, "-")
 		if len(id1Parts) > 2 || len(id2Parts) > 2 {
@@ -907,7 +918,7 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 		id := args[idx+numStreams].String()
 
 		go func(streamName string, streamId string, streamData []*storage.StreamEntry) {
-			res := &WaitChanResult{streamKey: sname, results: make([]*storage.StreamEntry, 0)}
+			res := &WaitChanResult{streamKey: streamName, results: make([]*storage.StreamEntry, 0)}
 
 			// If this isn't a blocking call, immediately send the relevant stream entries
 			// If this is a blocking call and the stream isn't empty and contains relevant elements, return with the relevant stream entries
@@ -1144,6 +1155,7 @@ func (h *CommandHandler) HandleSubscribeMode(respData *resp.RESPData, conn net.C
 	case "ping":
 		res, err = h.HandlePING(request, true)
 	case "quit":
+		res, err = h.HandleQUIT(request)
 	default:
 		err = fmt.Errorf("ERR can't execute '%s': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context", firstWord)
 	}
