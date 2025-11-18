@@ -133,7 +133,7 @@ func handleConn(conn net.Conn, handler *commands.CommandHandler) {
 
 			if firstWord == "multi" {
 				inTransaction = !inTransaction
-			} else if err != nil && !inSubscribeMode && firstWord == "subscribe" {
+			} else if err == nil && !inSubscribeMode && firstWord == "subscribe" {
 				inSubscribeMode = true
 			}
 
