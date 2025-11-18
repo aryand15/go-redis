@@ -901,11 +901,12 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 		sname := args[idx].String()
 		stream, ok := h.db.GetStream(sname)
 		if !ok {
+			h.db.Unlock()
 			return nil, fmt.Errorf("ERR stream with key '%s' does not exist", sname)
 		}
 		id := args[idx+numStreams].String()
 
-		go func() {
+		go func(streamName string, streamId string, streamData []*storage.StreamEntry) {
 			res := &WaitChanResult{streamKey: sname, results: make([]*storage.StreamEntry, 0)}
 
 			// If this isn't a blocking call, immediately send the relevant stream entries
@@ -982,7 +983,7 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 				return
 			}
 
-		}()
+		}(sname, id, stream)
 		h.db.Unlock()
 	}
 
