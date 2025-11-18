@@ -196,7 +196,7 @@ func (db *DB) PrependToList(key string, elem string) {
 		return
 	}
 
-	db.listData[key] = append([]string{key}, db.listData[key]...)
+	db.listData[key] = append([]string{elem}, db.listData[key]...)
 }
 
 func (db *DB) PopLeftList(key string) {
