@@ -713,12 +713,12 @@ func (h *CommandHandler) HandleXADD(args []*resp.RESPData) (*resp.RESPData, erro
 		for waiterId, chs := range idWaiters {
 			if CompareStreamIDs(id, waiterId) == 1 {
 				for _, ch := range chs {
-					go func() {
+					go func(channel chan *storage.StreamEntry) {
 						select {
-						case ch <- entry:
+						case channel <- entry:
 						default:
 						}
-					}()
+					}(ch)
 				}
 			}
 		}
@@ -728,12 +728,12 @@ func (h *CommandHandler) HandleXADD(args []*resp.RESPData) (*resp.RESPData, erro
 	allWaiters, ok := h.db.GetXREADAllWaiters(sname)
 	if ok {
 		for _, ch := range allWaiters {
-			go func() {
+			go func(channel chan *storage.StreamEntry) {
 				select {
-				case ch <- entry:
+				case channel <- entry:
 				default:
 				}
-			}()
+			}(ch)
 		}
 	}
 
@@ -911,10 +911,13 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 		// For each stream, check if it exists
 		sname := args[idx].String()
 		stream, ok := h.db.GetStream(sname)
-		if !ok {
+		if !ok && !blocking {
 			h.db.Unlock()
 			return nil, fmt.Errorf("ERR stream with key '%s' does not exist", sname)
 		}
+		if !ok {
+      		stream = []*storage.StreamEntry{}
+  		}
 		id := args[idx+numStreams].String()
 
 		go func(streamName string, streamId string, streamData []*storage.StreamEntry) {
