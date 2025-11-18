@@ -922,15 +922,15 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 
 			// If this isn't a blocking call, immediately send the relevant stream entries
 			// If this is a blocking call and the stream isn't empty and contains relevant elements, return with the relevant stream entries
-			if id != "$" && (!blocking || (blocking && len(stream) > 0)) {
+			if streamId != "$" && (!blocking || (blocking && len(streamData) > 0)) {
 				i := 0
-				for ; i < len(stream) && CompareStreamIDs(stream[i].GetID(), id) != 1; i++ {
+				for ; i < len(streamData) && CompareStreamIDs(streamData[i].GetID(), streamId) != 1; i++ {
 
 				}
 
 				// Either this is a non-blocking call, or we found relevant entries right away
-				if !blocking || i != len(stream) {
-					res.results = append(res.results, stream[i:]...)
+				if !blocking || i != len(streamData) {
+					res.results = append(res.results, streamData[i:]...)
 					results <- res
 					return
 				}
@@ -940,16 +940,16 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 			receiver := make(chan *storage.StreamEntry)
 
 			// If id = "$", add to list of channels under stream key of xReadAllWaiters
-			if id == "$" {
-				h.db.AddXREADAllWaiter(sname, receiver)
+			if streamId == "$" {
+				h.db.AddXREADAllWaiter(streamName, receiver)
 				// Make sure to remove channel from waiters list once done
 				defer func() {
 					h.db.Lock()
 					defer h.db.Unlock()
-					waiters, _ := h.db.GetXREADAllWaiters(sname)
+					waiters, _ := h.db.GetXREADAllWaiters(streamName)
 					for i, ch := range waiters {
 						if ch == receiver {
-							h.db.RemoveXREADAllWaiter(sname, i)
+							h.db.RemoveXREADAllWaiter(streamName, i)
 							break
 						}
 					}
@@ -957,16 +957,16 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 
 				// Otherwise add to list of channels under id key under stream key of xReadIdWaiters
 			} else {
-				h.db.AddXREADIDWaiter(sname, id, receiver)
+				h.db.AddXREADIDWaiter(streamName, streamId, receiver)
 
 				// Make sure to remove channel from waiters list once done
 				defer func() {
 					h.db.Lock()
 					defer h.db.Unlock()
-					allIdWaiters, _ := h.db.GetXREADIDWaiters(sname)
-					for i, ch := range allIdWaiters[id] {
+					allIdWaiters, _ := h.db.GetXREADIDWaiters(streamName)
+					for i, ch := range allIdWaiters[streamId] {
 						if ch == receiver {
-							h.db.RemoveXREADIDWaiter(sname, id, i)
+							h.db.RemoveXREADIDWaiter(streamName, streamId, i)
 							break
 						}
 					}
