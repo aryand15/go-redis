@@ -119,7 +119,7 @@ func DecodeFromRESP(b []byte) (numRead int, resp *RESPData, success bool) {
 	i := 1
 	for ; !(b[i] == '\n' && b[i-1] == '\r'); i++ {
 		// Error: Didn't reach an /r/n throughout the entire byte array
-		if i == len(b) {
+		if i == len(b)-1 {
 			return 0, nil, false
 		}
 

@@ -230,8 +230,7 @@ func TestDecodeFromRESP_ErrorCases(t *testing.T) {
 	}{
 		{"empty input", []byte{}},
 		{"invalid type", []byte("@invalid\r\n")},
-		// Note: "missing CRLF" test removed because it triggers a panic in the parser
-		// This is a known issue in the implementation that should be fixed separately
+		{"missing crlf", []byte("$5hello")},
 		{"incomplete bulk string", []byte("$5\r\nhel")},
 		{"wrong bulk string length", []byte("$10\r\nhello\r\n")},
 		{"invalid array length", []byte("*abc\r\n")},
