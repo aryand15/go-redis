@@ -1,0 +1,7 @@
+*.md
+.git/
+.DS_Store
+.github/
+.gitignore
+.air.toml
+.gitattributes

@@ -12,7 +12,9 @@ A lightweight Redis clone written in Go that implements core RESP2 (Redis Serial
 - **Connection Management:** Handles multiple TCP client connections concurrently using goroutines
 
 
-## Running Locally
+## First-Time Setup
+
+Prerequisites: Docker
 
 ### 1. Clone the repository
 ```bash
@@ -20,17 +22,24 @@ git clone https://github.com/aryand15/go-redis.git
 cd go-redis
 ```
 
-### 2. Run the server
+### 2. Build the Docker image
 ```bash
-go run ./app
+docker build -t go-redis .
 ```
 
-### 3. Connect using Redis CLI (for now; custom CLI coming soon!)
+## Running Locally
+
+### 1. Start the server by running the Docker container
+```bash
+docker run -p 6379:6379 go-redis
+```
+
+### 2. Connect one or multiple clients to the server (in separate terminals)
 ```bash
 redis-cli -p 6379
 ```
 
-Enter commands like:
+### 3. Enter commands like:
 ```bash
 PING
 SET mykey "Hello"
@@ -40,7 +49,6 @@ GET mykey
 ## Future Improvements
 - Implement persistence (AOF/RDB) so that data storage isn't completely ephemeral
 - Implement replication (leader/follower) for improved fault tolerance & availability
-- Develop custom CLI client
 - Benchmark performance
 
 
