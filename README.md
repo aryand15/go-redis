@@ -31,7 +31,7 @@ docker build -t go-redis .
 
 ### 1. Start the server by running the Docker container
 ```bash
-docker run -p --rm 6379:6379 go-redis
+docker run --rm -p 6379:6379 go-redis
 ```
 
 ### 2. Connect one or multiple clients to the server (in separate terminals)
