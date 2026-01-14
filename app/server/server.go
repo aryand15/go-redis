@@ -93,7 +93,7 @@ func handleConn(conn net.Conn, handler *commands.CommandHandler) {
 				_, respData, success := resp.DecodeFromRESP(message)
 
 				if !success || respData.Type != resp.Array || len(respData.ListRESPData) == 0 {
-					fmt.Println("Internal server error: Unable to parse RESP request")
+					fmt.Printf("Internal server error: Unable to parse RESP request: %s\n", string(message))
 					return
 				}
 
@@ -119,7 +119,7 @@ func handleConn(conn net.Conn, handler *commands.CommandHandler) {
 			_, respData, success := resp.DecodeFromRESP(message)
 
 			if !success || respData.Type != resp.Array || len(respData.ListRESPData) == 0 {
-				fmt.Println("Internal server error: Unable to parse RESP request")
+				fmt.Printf("Internal server error: Unable to parse RESP request: %s\n", string(message))
 				return
 			}
 
