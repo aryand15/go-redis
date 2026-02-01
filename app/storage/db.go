@@ -4,34 +4,34 @@ import (
 	"net"
 	"sync"
 	"time"
+	"github.com/aryand15/go-redis/resp"
 )
 
 type DB struct {
 	// Key-value pairs
-	stringData   map[string]string
-	stringTimers map[string]*time.Timer
+	stringData   map[string]string // key -> value
+	stringTimers map[string]*time.Timer // key -> timer
 
 	// Lists
-	listData     map[string]([]string)
-	blpopWaiters map[string]([]chan string)
+	listData     map[string]([]string) // key -> array
+	blpopWaiters map[string]([]chan string) // key -> queue of clients waiting on a BLPOP operation
 
 	// Streams
-	streamData map[string]([]*StreamEntry)
-	// Format: stream name -> ID -> list of channels waiting for new entries after ID
-	xreadIdWaiters map[string](map[string]([]chan *StreamEntry))
-	// Format: stream name -> list of channels waiting for any new entries
-	xreadAllWaiters map[string]([]chan *StreamEntry)
+	streamData map[string]([]*StreamEntry) // key -> [streamentry1, streamentry2, ...]
+	xreadIdWaiters map[string](map[string]([]chan *StreamEntry)) // stream name -> ID -> queue of channels waiting for new entries after ID
+	xreadAllWaiters map[string]([]chan *StreamEntry) // stream name -> queue of channels waiting for any new entries
 
 	// Mutex for concurrency
 	mu sync.Mutex
 
-	// Map of connections that are in the process of building transactions
-	transactions map[net.Conn]([][]byte)
+	// Transactions
+	transactions map[net.Conn]([]*resp.RESPData) // client -> [msg1, msg2, ...]
+
 
 	// Pub-sub
-	subscribers map[string]*Set[net.Conn] // Maps publisher channel name to set of receiving clients
-	publishers  map[net.Conn]*Set[string] // Maps client to set of subscribed publisher channels
-	receivers   map[net.Conn]chan string  // Each client gets their own channel
+	subscribers map[string]*Set[net.Conn] // publisher channel name -> set of receiving clients
+	publishers  map[net.Conn]*Set[string] // client -> set of subscribed publisher channels
+	receivers   map[net.Conn]chan string  // client -> channel for receiving updates
 
 }
 
@@ -43,7 +43,7 @@ func (db *DB) Unlock() {
 	db.mu.Unlock()
 }
 
-func (db *DB) GetTransaction(client net.Conn) ([][]byte, bool) {
+func (db *DB) GetTransaction(client net.Conn) ([]*resp.RESPData, bool) {
 	val, ok := db.transactions[client]
 	return val, ok
 }
@@ -53,10 +53,10 @@ func (db *DB) DeleteTransaction(client net.Conn) {
 }
 
 func (db *DB) CreateTransaction(client net.Conn) {
-	db.transactions[client] = make([][]byte, 0)
+	db.transactions[client] = make([]*resp.RESPData, 0)
 }
 
-func (db *DB) AddToTransaction(client net.Conn, request []byte) {
+func (db *DB) AddToTransaction(client net.Conn, request *resp.RESPData) {
 	if _, ok := db.GetTransaction(client); !ok {
 		db.CreateTransaction(client)
 	}
@@ -335,7 +335,7 @@ func NewDB() *DB {
 		streamData:      make(map[string]([]*StreamEntry)),
 		xreadIdWaiters:  make(map[string](map[string]([]chan *StreamEntry))),
 		xreadAllWaiters: make(map[string]([]chan *StreamEntry)),
-		transactions:    make(map[net.Conn]([][]byte)),
+		transactions:    make(map[net.Conn]([]*resp.RESPData)),
 		subscribers:     make(map[string]*Set[net.Conn]),
 		publishers:      make(map[net.Conn]*Set[string]),
 		receivers:       make(map[net.Conn]chan string),

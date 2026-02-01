@@ -120,13 +120,8 @@ func (h *CommandHandler) HandleEXEC(args []*resp.RESPData, conn net.Conn) (*resp
 	// Iterate through each command in the transaction
 	ret := &resp.RESPData{Type: resp.Array, ListRESPData: make([]*resp.RESPData, 0)}
 	for _, c := range commands {
-		_, respCommand, suc := resp.DecodeFromRESP(c)
-		// If unable to decode RESP byte array, capture error
-		if !suc {
-			ret.ListRESPData = append(ret.ListRESPData, resp.ConvertSimpleErrorToRESP("ERR unable to decode command"))
-
-			// Capture error from handling command or append the output of handling the command.
-		} else if res, err := h.Handle(respCommand, conn, false); err != nil {
+		// Capture error from handling command or append the successful output of handling the command.
+		if res, err := h.Handle(c, conn, false); err != nil {
 			ret.ListRESPData = append(ret.ListRESPData, resp.ConvertSimpleErrorToRESP(err.Error()))
 		} else {
 			ret.ListRESPData = append(ret.ListRESPData, res)
@@ -1058,7 +1053,7 @@ func CompareStreamIDs(idA string, idB string) int {
 	}
 }
 
-func (h *CommandHandler) Handle(respData *resp.RESPData, conn net.Conn, inTransaction bool) (*resp.RESPData, error) {
+func (h *CommandHandler) Handle(respData *resp.RESPData, conn net.Conn, isInTransaction bool) (*resp.RESPData, error) {
 
 	request := respData.ListRESPData
 	firstWord := strings.ToLower(string(request[0].Data))
@@ -1067,11 +1062,10 @@ func (h *CommandHandler) Handle(respData *resp.RESPData, conn net.Conn, inTransa
 	var err error
 
 	// If the command is being done under a transaction, and isn't exec, multi, or discard, simply queue it, don't execute it.
-	if inTransaction && firstWord != "exec" && firstWord != "multi" && firstWord != "discard" {
+	if isInTransaction && firstWord != "exec" && firstWord != "multi" && firstWord != "discard" {
 		h.db.Lock()
 		if _, ok := h.db.GetTransaction(conn); ok {
-			respRequest, _ := respData.EncodeToRESP()
-			h.db.AddToTransaction(conn, respRequest)
+			h.db.AddToTransaction(conn, respData)
 			h.db.Unlock()
 			return resp.ConvertSimpleStringToRESP("QUEUED"), nil
 		}

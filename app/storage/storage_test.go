@@ -4,6 +4,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/aryand15/go-redis/resp"
 )
 
 // Helper function to create test connections
@@ -257,8 +259,8 @@ func TestDB_TransactionOperations(t *testing.T) {
 		defer conn.Close()
 
 		db.CreateTransaction(conn)
-		db.AddToTransaction(conn, []byte("cmd1"))
-		db.AddToTransaction(conn, []byte("cmd2"))
+		db.AddToTransaction(conn, resp.ConvertBulkStringToRESP("cmd1"))
+		db.AddToTransaction(conn, resp.ConvertBulkStringToRESP("cmd1"))
 
 		trans, _ := db.GetTransaction(conn)
 		if len(trans) != 2 {
