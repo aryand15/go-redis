@@ -1,3 +1,4 @@
+// Package resp provides utilities for handling RESP2 (Redis Serialization Protocol 2).
 package resp
 
 import (
@@ -5,17 +6,18 @@ import (
 	"fmt"
 )
 
+// A RESPType represents one of the five valid RESP2 data types.
 type RESPType byte
 
 const (
-	SimpleString = '+'
-	SimpleError  = '-'
-	Integer      = ':'
-	BulkString   = '$'
-	Array        = '*'
+	SimpleString = '+'	// represents a non-binary, usually short, string.
+	SimpleError  = '-'	// represents a non-binary string meant to inform clients of any exceptions.
+	Integer      = ':'	// represents a signed, base-10, 64-bit integer.
+	BulkString   = '$'	// represents a binary string.
+	Array        = '*'	// represents an array of one or more elements, each of which belongs to a RESP2 data type.
 )
 
-// Common RESP responses
+// A Redis server might send one of these common RESP2 responses to the client.
 var (
 	RespOK         = []byte("+OK\r\n")
 	RespPong       = []byte("+PONG\r\n")
@@ -25,6 +27,7 @@ var (
 	RespNoneString = []byte("+none\r\n")
 )
 
+// Valid returns true if the given byte t is a valid RESP2 data type, and false if not.
 func (t RESPType) Valid() bool {
 	switch t {
 	case SimpleString, SimpleError, Integer, BulkString, Array:
@@ -34,20 +37,26 @@ func (t RESPType) Valid() bool {
 	}
 }
 
+// RESPData stores data from a valid RESP2 (Redis Serialization Protocol 2) serializable message. 
+// It holds the Type (simple string, simple error, integer, bulk string, or array); for non-array types, it holds the captured Data as a byte array,
+// and for the array type, it holds a list of nested RESPData instances as ListRESPData.
 type RESPData struct {
 	Type         RESPType
 	Data         []byte
 	ListRESPData []*RESPData
 }
 
+// String outputs the data held within the RESPData structure as a string.
 func (r *RESPData) String() string {
 	return string(r.Data)
 }
 
+// Int attempts to output the data held within the RESPData structure as an integer, returning an error if not possible.
 func (r *RESPData) Int() (int, error) {
 	return strconv.Atoi(r.String())
 }
 
+// CloneRESP takes an input *RESPData struct in and returns a deep copy of it.
 func CloneRESP(in *RESPData) *RESPData {
 	out := &RESPData{Type: in.Type}
 	if in.Data != nil {
@@ -62,6 +71,7 @@ func CloneRESP(in *RESPData) *RESPData {
 	return out
 }
 
+// ConvertBulkStringToRESP takes an input string s and formats it as a *RESPData bulk string instance.
 func ConvertBulkStringToRESP(s string) *RESPData {
 	return &RESPData{
 		Type: BulkString,
@@ -69,6 +79,7 @@ func ConvertBulkStringToRESP(s string) *RESPData {
 	}
 }
 
+// ConvertIntToRESP takes an input 64-bit integer n and formats it as a *RESPData Integer instance.
 func ConvertIntToRESP(n int64) *RESPData {
 	return &RESPData{
 		Type: Integer,
@@ -76,6 +87,7 @@ func ConvertIntToRESP(n int64) *RESPData {
 	}
 }
 
+// ConvertListToRESP takes an input string array arr and formats it as a *RESPData Array instance with Bulk String elements.
 func ConvertListToRESP(arr []string) *RESPData {
 	listResp := &RESPData{
 		Type:         Array,
@@ -87,6 +99,7 @@ func ConvertListToRESP(arr []string) *RESPData {
 	return listResp
 }
 
+// ConvertSimpleErrorToRESP takes an input string s and formats it as a *RESPData simple error instance
 func ConvertSimpleErrorToRESP(s string) *RESPData {
 	return &RESPData{
 		Type: SimpleError,
@@ -94,6 +107,7 @@ func ConvertSimpleErrorToRESP(s string) *RESPData {
 	}
 }
 
+// ConvertSimpleStringToRESP takes an input string s and formats it as a *RESPData simple string instance.
 func ConvertSimpleStringToRESP(s string) *RESPData {
 	return &RESPData{
 		Type: SimpleString,
@@ -101,11 +115,18 @@ func ConvertSimpleStringToRESP(s string) *RESPData {
 	}
 }
 
+// DecodeFromRESP takes a message as a byte array b, and attempts to deserialize it according to 
+// RESP2 (Redis Serialization Protocol 2). It returns the deserialized 
+// message as a *RESPData instance (nil if unsuccessful), along with any error captured in the deserialization process.
 func DecodeFromRESP(b []byte) (resp *RESPData, err error) {
 	_, resp, err = decodeFromRESP(b, 0)
 	return resp, err
 }
 
+// decodeFromRESP is a helper function that takes a message as a byte array b, and attempts to deserialize it according to 
+// RESP2 (Redis Serialization Protocol 2), starting at the start index. 
+// It returns the number of bytes read after successfully parsing the message (0 if unsuccessful), the deserialized 
+// message as a *RESPData instance (nil if unsuccessful), and any error captured in the deserialization process.
 func decodeFromRESP(b []byte, start int) (numRead int, resp *RESPData, err error) {
 
 	// Error: Byte array length is not sufficient
@@ -232,8 +253,9 @@ func decodeFromRESP(b []byte, start int) (numRead int, resp *RESPData, err error
 
 }
 
+// EncodeToRESP takes a *RESPData instance and attempts to convert it to a valid RESP2 (Redis Serialization Protocol 2) message, 
+// returning the message as a byte array (nil if unsuccessful) along with whether it was successful or not.
 func (r *RESPData) EncodeToRESP() (b []byte, success bool) {
-	// This is assuming that the RESPData passes all validation.
 
 	switch r.Type {
 	case SimpleString:
