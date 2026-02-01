@@ -2,6 +2,7 @@ package resp
 
 import (
 	"strconv"
+	"fmt"
 )
 
 type RESPType byte
@@ -100,67 +101,85 @@ func ConvertSimpleStringToRESP(s string) *RESPData {
 	}
 }
 
-func DecodeFromRESP(b []byte) (numRead int, resp *RESPData, success bool) {
-	// Error: Byte array is empty
-	if len(b) == 0 {
-		return 0, nil, false
+func DecodeFromRESP(b []byte) (resp *RESPData, err error) {
+	_, resp, err = decodeFromRESP(b, 0)
+	return resp, err
+}
+
+func decodeFromRESP(b []byte, start int) (numRead int, resp *RESPData, err error) {
+
+	// Error: Byte array length is not sufficient
+	// Smallest possible string is: "+\r\n"
+	msgLength := len(b) - start	// make sure to account for start index offset
+	if msgLength < 3 {
+		return 0, nil, fmt.Errorf("insufficient length: %s is of length %d but should be at least 3", b[start:], msgLength)
 	}
 
 	// Create new RESPData instance
 	resp = &RESPData{}
 
 	// Check if RESP type is valid
-	resp.Type = RESPType(b[0])
+	resp.Type = RESPType(b[start])
 	if !resp.Type.Valid() {
-		return 0, nil, false
+		return 0, nil, fmt.Errorf("invalid RESP type at index %d: %b", start, resp.Type)
 	}
 
-	// Navigate to the next /r/n
-	i := 1
+	// There should always be at least one CRLF (\r\n) in the byte array.
+	// Try to navigate to the next CRLF
+	i := start + 2
 	for ; !(b[i] == '\n' && b[i-1] == '\r'); i++ {
-		// Error: Didn't reach an /r/n throughout the entire byte array
+		// Error: Didn't reach a CRLF throughout the entire byte array
 		if i == len(b)-1 {
-			return 0, nil, false
+			return 0, nil, fmt.Errorf("did not encounter a CRLF terminator")
 		}
 
-		// Error: Missing \r before \n
-		if b[i] == '\n' && b[i-1] != '\r' {
-			return 0, nil, false
+		// Error: found an isolated \r or \n, which is not allowed for simple strings or errors
+		if (resp.Type == SimpleString || resp.Type == SimpleError) &&
+			b[i] == '\n' && b[i-1] != '\r' || 
+			b[i-1] == '\r' && b[i] != '\n' {
+			return 0, nil, fmt.Errorf("simple strings/errors must not contain non-binary characters \\r or \\n")
 		}
 	}
 
-	// Handle Simple String and Simple Error types.
-	// Simple String format: +OK\r\n
-	// SimpleError format: -Error message\r\n
-	if resp.Type == SimpleString || resp.Type == SimpleError {
-		resp.Data = b[1 : i-1]
-		return i + 1, resp, true
+	// If this isn't an array or bulk string and the message isn't being recursively parsed, 
+	// and the crlf we found isn't at the very end of the string, then we have an error.
+	if resp.Type != Array && resp.Type != BulkString && start == 0 && i != len(b)-1 {
+		return 0, nil, fmt.Errorf("extra characters found after crlf terminator starting at index %d for non-array type", i)
+	}
+
+	// Handle Simple String (+string\r\n) and Simple Error (-Error message\r\n) types.
+	if (resp.Type == SimpleError || resp.Type == SimpleString) {
+		resp.Data = b[start+1 : i-1] 
+		return i - start + 1, resp, nil // successfully parsed simple string/error
 	}
 
 	// Attempt to convert captured data to integer.
-	length, err := strconv.Atoi(string(b[1 : i-1]))
+	strLength := string(b[start+1 : i-1])
+	length, err := strconv.Atoi(strLength)
 
 	// Error: Unable to parse as integer.
 	if err != nil {
-		return 0, nil, false
+		return 0, nil, fmt.Errorf("unable to parse '%s' as an integer", strLength)
 	}
 
 	// Handle Integer type.
 	// Integer format: :[<+|->]<value>\r\n
 	if resp.Type == Integer {
-		resp.Data = b[1 : i-1]
-		return i + 1, resp, true
+		resp.Data = b[start+1 : i-1]  // it's stored as a string, not an actual integer
+		return i - start + 1, resp, nil // successfully parsed integer
 	}
 
 	// Error: Type is Array and integer is negative.
 	if length < 0 && resp.Type == Array {
-		return 0, nil, false
+		return 0, nil, fmt.Errorf("array length cannot be negative")
 	}
 
-	// Type is Bulk String and integer is negative (null bulk string).
-	if length < 0 && resp.Type == BulkString {
+	// Type is Bulk String and integer is -1 (null bulk string).
+	if length == -1 && resp.Type == BulkString {
 		resp.Data = nil
-		return i + 1, resp, true
+		return i - start + 1, resp, nil  // successfully parsed null bulk string
+	} else if length < 0 && resp.Type == BulkString {
+		return 0, nil, fmt.Errorf("bulk string length must not be negative, except for -1 for null bulk string")
 	}
 
 	i += 1
@@ -171,18 +190,18 @@ func DecodeFromRESP(b []byte) (numRead int, resp *RESPData, success bool) {
 
 		// Error: Data length is too short
 		if (i + length + 2) > len(b) {
-			return 0, nil, false
+			return 0, nil, fmt.Errorf("specified bulk string length does not match length of actual bulk string data")
 		}
 
 		i += (length + 1)
 
 		// Error: Didn't find an \r\n after reading appropriate amount of data
 		if !(b[i] == '\n' && b[i-1] == '\r') {
-			return 0, nil, false
+			return 0, nil, fmt.Errorf("did not find a crlf terminator after reading specified length of bulk string")
 		}
 
 		resp.Data = b[j : j+length]
-		return i + 1, resp, true
+		return i - start + 1, resp, nil  // successfully parsed bulk string
 	}
 
 	// Now for the absolute beast. Handle the Array type.
@@ -192,14 +211,15 @@ func DecodeFromRESP(b []byte) (numRead int, resp *RESPData, success bool) {
 	for idx := 0; idx < length; idx++ {
 		// Errror: Not enough array elements were able to be read.
 		if i == len(b) {
-			return 0, nil, false
+			return 0, nil, fmt.Errorf("unable to read specified number of array elements")
 		}
 
-		rread, rresp, rsuccess := DecodeFromRESP(b[i:])
+		// Recursively parse next element of array starting at current index i
+		rread, rresp, rerr := decodeFromRESP(b, i)
 
-		// Error: One of the array RESP elements was unsuccessfully parsed.
-		if !rsuccess {
-			return 0, nil, false
+		// Error: One of the array RESP elements was unsuccessfully parsed. Propagate error
+		if rerr != nil {
+			return 0, nil, rerr
 		}
 
 		// Add RESPData to list of array elements
@@ -208,7 +228,7 @@ func DecodeFromRESP(b []byte) (numRead int, resp *RESPData, success bool) {
 		i += rread
 	}
 
-	return i, resp, true
+	return i, resp, nil  // successfully parsed array
 
 }
 

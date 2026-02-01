@@ -6,14 +6,10 @@ import (
 
 func TestDecodeFromRESP_SimpleString(t *testing.T) {
 	input := []byte("+OK\r\n")
-	numRead, resp, success := DecodeFromRESP(input)
+	resp, err := DecodeFromRESP(input)
 
-	if !success {
-		t.Errorf("Expected success to be true, got false")
-	}
-
-	if numRead != len(input) {
-		t.Errorf("Expected numRead to be %d, got %d", len(input), numRead)
+	if err != nil {
+		t.Errorf("Expected no error, got: %s", err.Error())
 	}
 
 	if resp.Type != SimpleString {
@@ -27,14 +23,10 @@ func TestDecodeFromRESP_SimpleString(t *testing.T) {
 
 func TestDecodeFromArray(t *testing.T) {
 	input := []byte("*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n")
-	numRead, resp, success := DecodeFromRESP(input)
+	resp, err := DecodeFromRESP(input)
 
-	if !success {
-		t.Errorf("Expected success to be true, got false")
-	}
-
-	if numRead != len(input) {
-		t.Errorf("Expected numRead to be %d, got %d", len(input), numRead)
+	if err != nil {
+		t.Errorf("Expected no error, got: %s", err.Error())
 	}
 
 	if resp.Type != Array {
@@ -56,14 +48,10 @@ func TestDecodeFromArray(t *testing.T) {
 
 func TestDecodeFromComplexArray(t *testing.T) {
 	input := []byte("*7\r\n$5\r\nRPUSH\r\n$5\r\ngrape\r\n$6\r\norange\r\n$4\r\npear\r\n$10\r\nstrawberry\r\n$6\r\nbanana\r\n$9\r\npineapple\r\n")
-	numRead, resp, success := DecodeFromRESP(input)
+	resp, err := DecodeFromRESP(input)
 
-	if !success {
-		t.Errorf("Expected success to be true, got false")
-	}
-
-	if numRead != len(input) {
-		t.Errorf("Expected numRead to be %d, got %d", len(input), numRead)
+	if err != nil {
+		t.Errorf("Expected no error, got: %s", err.Error())
 	}
 
 	if resp.Type != Array {
@@ -84,14 +72,10 @@ func TestDecodeFromComplexArray(t *testing.T) {
 
 func TestDecodeEmptyArray(t *testing.T) {
 	input := []byte("*0\r\n")
-	numRead, resp, success := DecodeFromRESP(input)
+	resp, err := DecodeFromRESP(input)
 
-	if !success {
-		t.Errorf("Expected success to be true, got false")
-	}
-
-	if numRead != len(input) {
-		t.Errorf("Expected numRead to be %d, got %d", len(input), numRead)
+	if err != nil {
+		t.Errorf("Expected no error, got: %s", err.Error())
 	}
 
 	if resp.Type != Array {
@@ -124,14 +108,10 @@ func TestEncodeEmptyArray(t *testing.T) {
 
 func TestDecodeFromRESP_SimpleError(t *testing.T) {
 	input := []byte("-ERR unknown command\r\n")
-	numRead, resp, success := DecodeFromRESP(input)
+	resp, err := DecodeFromRESP(input)
 
-	if !success {
+	if err != nil {
 		t.Fatal("Expected success to be true")
-	}
-
-	if numRead != len(input) {
-		t.Errorf("Expected numRead %d, got %d", len(input), numRead)
 	}
 
 	if resp.Type != SimpleError {
@@ -156,12 +136,9 @@ func TestDecodeFromRESP_Integer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			numRead, resp, success := DecodeFromRESP([]byte(tt.input))
-			if !success {
-				t.Fatal("Expected success")
-			}
-			if numRead != len(tt.input) {
-				t.Errorf("Expected numRead %d, got %d", len(tt.input), numRead)
+			resp, err := DecodeFromRESP([]byte(tt.input))
+			if err != nil {
+				t.Fatal("Expected success to be true")
 			}
 			if resp.Type != Integer {
 				t.Errorf("Expected Integer type")
@@ -176,13 +153,10 @@ func TestDecodeFromRESP_Integer(t *testing.T) {
 func TestDecodeFromRESP_BulkString(t *testing.T) {
 	t.Run("normal bulk string", func(t *testing.T) {
 		input := []byte("$5\r\nhello\r\n")
-		numRead, resp, success := DecodeFromRESP(input)
+		resp, err := DecodeFromRESP(input)
 
-		if !success {
-			t.Fatal("Expected success")
-		}
-		if numRead != len(input) {
-			t.Errorf("Expected numRead %d, got %d", len(input), numRead)
+		if err != nil {
+			t.Fatalf("Expected success, got: %s", err.Error())
 		}
 		if resp.Type != BulkString {
 			t.Errorf("Expected BulkString")
@@ -194,13 +168,10 @@ func TestDecodeFromRESP_BulkString(t *testing.T) {
 
 	t.Run("null bulk string", func(t *testing.T) {
 		input := []byte("$-1\r\n")
-		numRead, resp, success := DecodeFromRESP(input)
+		resp, err := DecodeFromRESP(input)
 
-		if !success {
-			t.Fatal("Expected success")
-		}
-		if numRead != len(input) {
-			t.Errorf("Expected numRead %d, got %d", len(input), numRead)
+		if err != nil {
+			t.Fatalf("Expected success, got: %s", err.Error())
 		}
 		if resp.Type != BulkString {
 			t.Errorf("Expected BulkString")
@@ -212,10 +183,10 @@ func TestDecodeFromRESP_BulkString(t *testing.T) {
 
 	t.Run("empty bulk string", func(t *testing.T) {
 		input := []byte("$0\r\n\r\n")
-		_, resp, success := DecodeFromRESP(input)
+		resp, err := DecodeFromRESP(input)
 
-		if !success {
-			t.Fatal("Expected success")
+		if err != nil {
+			t.Fatalf("Expected success, got: %s", err.Error())
 		}
 		if resp.String() != "" {
 			t.Errorf("Expected empty string, got '%s'", resp.String())
@@ -235,12 +206,14 @@ func TestDecodeFromRESP_ErrorCases(t *testing.T) {
 		{"wrong bulk string length", []byte("$10\r\nhello\r\n")},
 		{"invalid array length", []byte("*abc\r\n")},
 		{"incomplete array", []byte("*2\r\n$3\r\nGET\r\n")},
+		{"simple string with binary char", []byte("+hihi\r\r\n")},
+		{"simple string with extra crlf", []byte("+hihi\r\n\r\n")},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, success := DecodeFromRESP(tt.input)
-			if success {
+			_, err := DecodeFromRESP(tt.input)
+			if err == nil {
 				t.Errorf("Expected failure for %s", tt.name)
 			}
 		})
@@ -359,9 +332,9 @@ func TestRoundTrip(t *testing.T) {
 	for _, original := range tests {
 		t.Run(original, func(t *testing.T) {
 			// Decode
-			_, resp, success := DecodeFromRESP([]byte(original))
-			if !success {
-				t.Fatal("Decode failed")
+			resp, err := DecodeFromRESP([]byte(original))
+			if err != nil {
+				t.Fatalf("Decode failed: %s", err.Error())
 			}
 
 			// Encode

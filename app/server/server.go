@@ -133,9 +133,9 @@ func handleConn(conn net.Conn, handler *commands.CommandHandler) {
 // Deserializes a RESP-serialized client message.
 // Returns the deserialized message, the command (first word), and whether the parsing was successful
 func parseClientInput(message []byte) (*resp.RESPData, string, bool) {
-	_, respData, success := resp.DecodeFromRESP(message)
+	respData, err := resp.DecodeFromRESP(message)
 	// Error: Either the string was improperly serialized, or it wasn't an array type, or it was an empty array
-	if !success || respData.Type != resp.Array || len(respData.ListRESPData) == 0 {
+	if err != nil || respData.Type != resp.Array || len(respData.ListRESPData) == 0 {
 		fmt.Printf("Internal server error: Unable to parse RESP request: %s\n", string(message))
 		return nil, "", false
 	}

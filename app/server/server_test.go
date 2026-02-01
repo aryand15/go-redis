@@ -31,8 +31,8 @@ func readResponse(conn net.Conn) (*resp.RESPData, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, respData, success := resp.DecodeFromRESP(buf[:n])
-	if !success {
+	respData, err := resp.DecodeFromRESP(buf[:n])
+	if err != nil {
 		return nil, err
 	}
 	return respData, nil

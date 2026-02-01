@@ -52,9 +52,10 @@ func checkArgCountSatisfies(cmd string, args []*resp.RESPData, cond func(int) bo
 	return nil
 }
 
+// HandleCOMMANDDOCS handles the response after redis-cli sends "COMMAND DOCS" when a client connects by returning an empty array for now. 
+// It returns an error if the message starts with "COMMAND" but is not followed by "DOCS".
 func (h *CommandHandler) HandleCOMMANDDOCS(args []*resp.RESPData) (*resp.RESPData, error) {
-	// redis-cli sends COMMAND DOCS when a client connects
-	// Return empty array for now
+	
 
 	if err := checkArgCountEquals("command", args, 2); err != nil {
 		return nil, err
@@ -70,6 +71,8 @@ func (h *CommandHandler) HandleCOMMANDDOCS(args []*resp.RESPData) (*resp.RESPDat
 	}, nil
 }
 
+// HandleECHO handles a command in the form "ECHO message" by returning back the given message. 
+// It returns an error if the message does not have the approproate number of parts (2 in this case).
 func (h *CommandHandler) HandleECHO(args []*resp.RESPData) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("echo", args, 2); err != nil {
 		return nil, err
@@ -77,6 +80,10 @@ func (h *CommandHandler) HandleECHO(args []*resp.RESPData) (*resp.RESPData, erro
 	return args[1], nil
 }
 
+// HandlePING handles the "PING" command. 
+// If in subscribe mode, it returns a RESP array with bulk string elements "pong" followed by "". 
+// Otherwise, it returns "PONG" as a bulk string. 
+// It returns an error if the message contains other arguments following "PING".
 func (h *CommandHandler) HandlePING(args []*resp.RESPData, inSubscribeMode bool) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("ping", args, 1); err != nil {
 		return nil, err
