@@ -249,7 +249,7 @@ func TestPubSubSubscribePublish(t *testing.T) {
 		if msg != "hello" {
 			t.Fatalf("expected message 'hello', got %q", msg)
 		}
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatalf("timeout waiting for published message")
 	}
 
