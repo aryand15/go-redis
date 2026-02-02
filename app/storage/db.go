@@ -17,7 +17,7 @@ type DB struct {
 	blpopWaiters map[string]([]chan string) // key -> queue of clients waiting on a BLPOP operation
 
 	// Streams
-	streamData map[string]([]*StreamEntry) // key -> [streamentry1, streamentry2, ...]
+	streamData map[string](*Stream) // key -> [streamentry1, streamentry2, ...]
 	xreadIdWaiters map[string](map[string]([]chan *StreamEntry)) // stream name -> ID -> queue of channels waiting for new entries after ID
 	xreadAllWaiters map[string]([]chan *StreamEntry) // stream name -> queue of channels waiting for any new entries
 
@@ -294,12 +294,12 @@ func (db *DB) RemoveBLPOPWaiter(key string, idx int) {
 	}
 }
 
-func (db *DB) GetStream(key string) ([]*StreamEntry, bool) {
+func (db *DB) GetStream(key string) (*Stream, bool) {
 	val, ok := db.streamData[key]
 	return val, ok
 }
 
-func (db *DB) SetStream(key string, val []*StreamEntry) {
+func (db *DB) SetStream(key string, val *Stream) {
 	// Make sure no other data type has the same key
 	if !db.CanSetStream(key) {
 		return
@@ -332,7 +332,7 @@ func NewDB() *DB {
 		stringTimers:    make(map[string]*time.Timer),
 		listData:        make(map[string]([]string)),
 		blpopWaiters:    make(map[string]([]chan string)),
-		streamData:      make(map[string]([]*StreamEntry)),
+		streamData:      make(map[string](*Stream)),
 		xreadIdWaiters:  make(map[string](map[string]([]chan *StreamEntry))),
 		xreadAllWaiters: make(map[string]([]chan *StreamEntry)),
 		transactions:    make(map[net.Conn]([]*resp.RESPData)),

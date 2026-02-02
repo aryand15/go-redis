@@ -873,7 +873,7 @@ func TestCompareStreamIDs(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.idA+" vs "+c.idB, func(t *testing.T) {
-			got := CompareStreamIDs(c.idA, c.idB)
+			got := storage.CompareStreamIDs(c.idA, c.idB)
 			if got != c.want {
 				t.Fatalf("CompareStreamIDs(%q, %q) = %d, want %d", c.idA, c.idB, got, c.want)
 			}

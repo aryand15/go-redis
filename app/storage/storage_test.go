@@ -4,7 +4,6 @@ import (
 	"net"
 	"testing"
 	"time"
-
 	"github.com/aryand15/go-redis/resp"
 )
 
@@ -121,7 +120,8 @@ func TestDB_StringOperations(t *testing.T) {
 		}
 
 		// Cannot set when stream exists
-		stream := []*StreamEntry{NewStreamEntry("1-0")}
+		stream := NewStream()
+		stream.AddEntry(NewStreamEntry("1-0"))
 		db.SetStream("streamkey", stream)
 		if db.CanSetString("streamkey") {
 			t.Error("Expected not to be able to set string when stream exists")
@@ -204,7 +204,8 @@ func TestDB_StreamOperations(t *testing.T) {
 		db := NewDB()
 		entry := NewStreamEntry("1-0")
 		entry.Set("field", "value")
-		stream := []*StreamEntry{entry}
+		stream := NewStream()
+		stream.AddEntry(entry)
 
 		db.SetStream("stream1", stream)
 
@@ -213,8 +214,8 @@ func TestDB_StreamOperations(t *testing.T) {
 			t.Fatal("Expected stream to exist")
 		}
 
-		if len(retrieved) != 1 {
-			t.Errorf("Expected 1 entry, got %d", len(retrieved))
+		if retrieved.Length() != 1 {
+			t.Errorf("Expected 1 entry, got %d", retrieved.Length())
 		}
 	})
 
