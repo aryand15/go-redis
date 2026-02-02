@@ -8,16 +8,22 @@ import (
 	"time"
 )
 
+// StreamEntry represents an entry in a Redis stream, and contains an id along with at least one key-value pair. 
+// The id of a stream entry must be in the format "int-int", and the keys/values must be strings.
 type StreamEntry struct { 
 	id string 
 	values map[string]string 
 }
 
+// Stream represents a Redis stream, containing multiple StreamEntry instances in order. 
+// For any two stream entries, the ID of the one that comes after must be "bigger" than the other. 
+// The CompareStreamIDs function can be used to determine the larger of two stream IDs.
 type Stream struct {
 	length int
 	stream []*StreamEntry
 }
 
+// NewStream returns a fresh, unpopulated Stream object.
 func NewStream() *Stream {
 	return &Stream{
 		length: 0,
@@ -51,6 +57,7 @@ func CompareStreamIDs(idA string, idB string) int {
 	}
 }
 
+// NewStreamEntry returns a fresh StreamEntry object with the given id.
 func NewStreamEntry(id string) *StreamEntry {
 	newEntry := &StreamEntry{
 		id: id, 
@@ -58,10 +65,12 @@ func NewStreamEntry(id string) *StreamEntry {
 	return newEntry
 }
 
+// Length returns the number of stream entries in the Stream st.
 func (st *Stream) Length() int {
 	return st.length
 }
 
+// NextStreamID generates and returns the next valid stream ID for a future stream entry based on the most recent stream ID in st.
 func (st *Stream) NextStreamID() string {
 	if st.length == 0 {
 		return fmt.Sprintf("%d-%d", time.Now().UnixMilli(), 0)
@@ -86,19 +95,25 @@ func (st *Stream) NextStreamID() string {
 	return fmt.Sprintf("%d-%d", currMillis, seqNum)
 }
 
+// AddEntry adds a new valid StreamEntry entry to Stream st.
 func (st *Stream) AddEntry(entry *StreamEntry) {
 	st.stream = append(st.stream, entry)
 	st.length++
 }
 
+// EntryAt returns the stream entry at the given idx of Stream st.
 func (st *Stream) EntryAt(idx int) *StreamEntry {
 	return st.stream[idx]
 }
 
+// StreamData returns the stream data of Stream st as a list of StreamEntry instances.
 func (st *Stream) StreamData() []*StreamEntry {
 	return st.stream
 }
 
+// CleanedNextStreamID takes a stream id, cleans it (replaces asterisks with real integers) and determines 
+// if it can be used as the id for the next entry in the stream. If so, it returns the cleaned id; if not, 
+// it returns an error.
 func (st *Stream) CleanedNextStreamID(id string) (string, error) {
 	// Cannot be 0-0
 	if id == "0-0" {
@@ -132,25 +147,33 @@ func (st *Stream) CleanedNextStreamID(id string) (string, error) {
 }
 
 
-
+// Set assigns the given val to the key in the StreamEntry s.
 func (s *StreamEntry) Set(key string, val string) {
 	s.values[key] = val
 }
 
+// GetMillis returns the first part of the valid stream ID in StreamEntry s, where the valid stream ID is formatted as: "int-int"
 func (s *StreamEntry) GetMillis() int {
 	m, _ := strconv.Atoi(strings.Split(s.id, "-")[0])
 	return m
 }
 
+// GetID returns the entire valid stream ID of StreamEntry s, where the valid stream ID is formatted as: "int-int".
 func (s *StreamEntry) GetID() string {
 	return s.id
 }
 
+// GetSeqNum returns the second part of the valid stream ID in StreamEntry s, where the valid stream ID is formatted as: "int-int"
 func (s *StreamEntry) GetSeqNum() int {
 	n, _ := strconv.Atoi(strings.Split(s.id, "-")[1])
 	return n
 }
 
+// RESPData formats the data in StreamEntry s as a RESP array with the following format: 
+//
+// [id, [key1, val1, key2, val2] ]
+//
+// And returns the output as a RESPData structure.
 func (s *StreamEntry) RESPData() *resp.RESPData {
 	streamEntry := &resp.RESPData{Type: resp.Array, ListRESPData: make([]*resp.RESPData, 2)}
 
@@ -161,8 +184,7 @@ func (s *StreamEntry) RESPData() *resp.RESPData {
 	// Add list of keys & values as second element of list
 	respKVList := &resp.RESPData{Type: resp.Array, ListRESPData: make([]*resp.RESPData, 0)}
 	for k := range s.values {
-		respKVList.ListRESPData = append(respKVList.ListRESPData, resp.ConvertBulkStringToRESP(k))
-		respKVList.ListRESPData = append(respKVList.ListRESPData, resp.ConvertBulkStringToRESP(s.values[k]))
+		respKVList.ListRESPData = append(respKVList.ListRESPData, resp.ConvertBulkStringToRESP(k), resp.ConvertBulkStringToRESP(s.values[k]))
 	}
 	streamEntry.ListRESPData[1] = respKVList
 
