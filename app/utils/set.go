@@ -1,4 +1,4 @@
-package storage
+package utils
 
 type Set[T comparable] struct {
 	set map[T]struct{}
@@ -22,6 +22,13 @@ func (s *Set[T]) Add(entry T) {
 
 func (s *Set[T]) Items() map[T]struct{} {
 	return s.set
+}
+
+func (s *Set[T]) Clear() {
+	for item := range s.set {
+		delete(s.set, item)
+		s.length--
+	}
 }
 
 func (s *Set[T]) Remove(entry T) {

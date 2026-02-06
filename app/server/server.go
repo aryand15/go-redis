@@ -1,12 +1,13 @@
 package server
 
 import (
-	"strings"
+	"fmt"
+	"log"
+	"net"
+
+	"github.com/aryand15/go-redis/app/client"
 	"github.com/aryand15/go-redis/app/commands"
 	"github.com/aryand15/go-redis/resp"
-	"fmt"
-	"net"
-	"log"
 )
 
 const (
@@ -24,7 +25,7 @@ func StartServer(handler *commands.CommandHandler) error {
 	log.Println("Server started!")
 
 	// Make sure to stop listener when server is terminated
-	defer l.Close() 
+	defer l.Close()
 
 	// Continually accept and handle connections from clients
 	for {
@@ -32,154 +33,132 @@ func StartServer(handler *commands.CommandHandler) error {
 		if err != nil {
 			return fmt.Errorf("error accepting connection: %v", err)
 		}
-		go handleConn(conn, handler)
+		client := client.NewClient(&conn)
+		go handleConn(client, handler)
 	}
 }
 
-func handleConn(conn net.Conn, handler *commands.CommandHandler) {
-	log.Printf("New connection from %s", conn.RemoteAddr())
-
-	// Cleanup function after client disconnects
-	defer handleDisconnect(conn, handler)
-
-	isInTransaction := false
-	inSubscribeMode := false
+func handleConn(client *client.Client, handler *commands.CommandHandler) {
+	log.Printf("New connection from %s", client.Id())
 
 	// Since reading is a blocking operation, we spawn a goroutine to handle client commands
 	// This allows us to handle pub/sub commands so we can simultaneously listen to publisher messages as well as client input in subscribe mode
 	// Otherwise, we could only listen to one message stream or the other, but not both.
-	clientInput := make(chan []byte)
-	go readInputFromConn(conn, clientInput)
+	go readInputFromClient(client, handler)
 
 	for {
 
 		var res *resp.RESPData
-		var err error
-
-		// Dedicated channel for this client to receive updates from its publishers (nil if not in subscribe mode)
-		var receiver <-chan string
-		if inSubscribeMode {
-			receiver, _ = handler.GetDB().GetReceiver(conn)
-		}
+		var cmdProcessErr error
 
 		// Handle both client input and publisher messages when in subscribe mode, each with different channels
 		// Handle whichever comes first
 		select {
-		
-		case message, sentOk := <-clientInput:	// Case 1: Client input comes first
+
+		case message, sentOk := <-client.ClientInputChan: // Case 1: Client input comes first
 
 			if !sentOk { // Error reading client input buffer
 				return
 			}
 
-			// Deserialize client message RESP
-			respData, firstWord, success := parseClientInput(message)
-			if !success {
+			// Deserialize client message RESP, handling any issues if need be
+			respData, decodeErr := resp.DecodeFromRESP(message)
+			if decodeErr != nil || respData.Type != resp.Array || len(respData.ListRESPData) == 0 {
+				fmt.Printf("Internal server error: Unable to parse RESP request: %s\n", string(message))
 				return
 			}
 
-			// Handle the command if made in subscribe mode	
-			// If the user typed QUIT while in subscribe mode, remove them from subscribe mode
-			if inSubscribeMode {
-				res, err = handler.HandleSubscribeMode(respData, conn)
-				if err == nil && firstWord == "quit" {
-					inSubscribeMode = false
-				}
-			
-			// Otherwise, handle transaction modes and normal modes
-			} else {
-				if firstWord == "exec" || firstWord == "discard" {
-					isInTransaction = false
-				}
+			// Handle message and receive response
+			res, cmdProcessErr = handler.Handle(respData, client)
 
-				res, err = handler.Handle(respData, conn, isInTransaction)
-
-				if firstWord == "multi" {
-					isInTransaction = !isInTransaction
-				} else if err == nil && !inSubscribeMode && firstWord == "subscribe" {
-					inSubscribeMode = true
-				}
+			// If command failed due to client disconnection, exit without trying to write
+			if cmdProcessErr != nil && cmdProcessErr.Error() == "client disconnected" {
+				return
 			}
 
-		case publisherInput, sentOk := <-receiver:	// Case 2: Publisher messages come first
+		case publisherInput, sentOk := <-client.PubSubChan: // Case 2: Publisher messages come first
 			if !sentOk { // Channel is closed
 				return
 			}
 
 			res = resp.ConvertBulkStringToRESP(publisherInput)
 		}
-		
-		
+
 		// Allocate buffer to hold response to send back to client
 		var response []byte
 
 		// If no error while handling command, convert RESP data structure into a RESP string to send back to client
 		// Otherwise, convert the error string into a RESP string
-		if err != nil {
-			response, _ = resp.ConvertSimpleErrorToRESP(err.Error()).EncodeToRESP()
+		if cmdProcessErr != nil {
+			response, _ = resp.ConvertSimpleErrorToRESP(cmdProcessErr.Error()).EncodeToRESP()
 		} else {
 			response, _ = res.EncodeToRESP()
 		}
 
 		// Write response back to client, handling any errors
-		if _, err := conn.Write(response); err != nil {
+		if _, err := client.GetConn().Write(response); err != nil {
 			fmt.Printf("Internal Server Error: error writing response: %v\n", err)
 			return
 		}
 	}
 }
 
-
-// Deserializes a RESP-serialized client message.
-// Returns the deserialized message, the command (first word), and whether the parsing was successful
-func parseClientInput(message []byte) (*resp.RESPData, string, bool) {
-	respData, err := resp.DecodeFromRESP(message)
-	// Error: Either the string was improperly serialized, or it wasn't an array type, or it was an empty array
-	if err != nil || respData.Type != resp.Array || len(respData.ListRESPData) == 0 {
-		fmt.Printf("Internal server error: Unable to parse RESP request: %s\n", string(message))
-		return nil, "", false
-	}
-	firstWord := strings.ToLower(string(respData.ListRESPData[0].Data))
-    return respData, firstWord, true
-
-}
-
-// Removes any data associated with this client from the datastore on disconnect
-func handleDisconnect(conn net.Conn, handler *commands.CommandHandler) {
-	// Remove client from subscription list of every publisher
+// handleDisconnect removes any data associated with this client from the datastore on disconnect,
+// including removing it from client queues blocked on BLPOP, sets of clients blocked on XREAD, and other blocking operations
+// as necessary.
+func handleDisconnect(c *client.Client, handler *commands.CommandHandler) {
+	close(c.ClientInputChan)
 	db := handler.GetDB()
 	db.Lock()
-	if pubs, ok := handler.GetDB().GetPublishers(conn); ok {
-		for pub := range pubs.Items() {
-			db.RemoveSubscriberFromPublisher(pub, conn)
+
+	// If client is in subscribe mode, remove client from subscription list of every publisher
+	// and close its pub-sub channel
+	if c.IsInSubscribeMode() {
+		clientPubs, _ := c.GetPublishers()
+		for pub := range clientPubs.Items() {
+			db.RemoveSubscriber(c, pub)
+		}
+		close(c.PubSubChan)
+
+		// Otherwise remove from BLPOP and XREAD waiters
+	} else if !c.IsInTransactionMode() {
+		xreadData, _ := c.GetXREADIds()
+		for streamKey, idToChan := range xreadData {
+			for id := range idToChan {
+				db.RemoveXREADIDWaiter(streamKey, id, c)
+			}
+		}
+
+		blpopData, _ := c.GetBlpopKeys()
+		for key := range blpopData.Items() {
+			db.RemoveBLPOPWaiter(key, c)
 		}
 	}
-
-	// Remove the client from map of all subscribers and remove its receiving channel
-	db.DeleteSubscriber(conn)
-
-	// TODO: remove from BLPOP waiters, XREAD ID and XREAD ALL waiters
 
 	db.Unlock()
 
-	// Close TCP connection
-	conn.Close()
+	// Close BlockOpChan after removing from waiters to prevent race condition
+	close(c.BlockOpChan)
 
-	log.Printf("Connection closed: %s", conn.RemoteAddr())
+	// Close TCP connection
+	c.CloseConn()
+
+	log.Printf("Connection closed: %s", c.Id())
 }
 
 // Function that continously reads messages from connection and sends to a receiving channel
-func readInputFromConn(conn net.Conn, receiverChan chan<- []byte) {
+func readInputFromClient(client *client.Client, handler *commands.CommandHandler) {
+	defer handleDisconnect(client, handler)
 	buf := make([]byte, bufferSize)
 	for {
-		n, err := conn.Read(buf)
+		n, err := client.GetConn().Read(buf)
 		if err != nil {
-			close(receiverChan)
 			return
 		}
+		msg := buf[:n]
 		data := make([]byte, n)
-		copy(data, buf[:n])
-		receiverChan <- data
+		copy(data, msg)
+		client.ClientInputChan <- data
 
 	}
 }

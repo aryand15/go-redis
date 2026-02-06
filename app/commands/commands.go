@@ -3,11 +3,11 @@ package commands
 import (
 	"fmt"
 	"math"
-	"net"
 	"strconv"
 	"strings"
 	"time"
-
+	"sync"
+	"github.com/aryand15/go-redis/app/client"
 	"github.com/aryand15/go-redis/app/storage"
 	"github.com/aryand15/go-redis/resp"
 )
@@ -24,6 +24,8 @@ func (h *CommandHandler) GetDB() *storage.DB {
 	return h.db
 }
 
+// checkArgCountEquals checks if the number of arguments in the given command is equal to the given expected value, 
+// returning an error if that is not the case.
 func checkArgCountEquals(cmd string, args []*resp.RESPData, expected int) error {
 	if len(args) != expected {
 		return fmt.Errorf("ERR wrong number of arguments for '%s' command: want %d, but got %d", strings.ToLower(cmd), expected, len(args))
@@ -31,6 +33,8 @@ func checkArgCountEquals(cmd string, args []*resp.RESPData, expected int) error 
 	return nil
 }
 
+// checkArgCountGreaterThan checks if the number of arguments in the given command is greater than the threshold low, 
+// returning an error if that is not the case.
 func checkArgCountGreaterThan(cmd string, args []*resp.RESPData, low int) error {
 	if len(args) <= low {
 		return fmt.Errorf("ERR wrong number of arguments for '%s' command: want greater than %d, but got %d", strings.ToLower(cmd), low, len(args))
@@ -38,6 +42,8 @@ func checkArgCountGreaterThan(cmd string, args []*resp.RESPData, low int) error 
 	return nil
 }
 
+// checkArgCountBetween checks if the number of arguments in the given command is in between the given low and high thresholds, inclusive, 
+// returning an error if that is not the case.
 func checkArgCountBetween(cmd string, args []*resp.RESPData, low int, high int) error {
 	if len(args) < low || len(args) > high {
 		return fmt.Errorf("ERR wrong number of arguments for '%s' command: want %d-%d, but got %d", strings.ToLower(cmd), low, high, len(args))
@@ -45,6 +51,8 @@ func checkArgCountBetween(cmd string, args []*resp.RESPData, low int, high int) 
 	return nil
 }
 
+// checkArgCountSatisfies checks if the number of arguments in the given command satisfies a given custom condition, 
+// returning an error with an error message representing the issue for that custom condition if it is not satisfied.
 func checkArgCountSatisfies(cmd string, args []*resp.RESPData, cond func(int) bool, errorMsg string) error {
 	if !cond(len(args)) {
 		return fmt.Errorf("ERR wrong number of arguments for '%s': number of arguments %d does not satisfy condition: %s", strings.ToLower(cmd), len(args), errorMsg)
@@ -52,10 +60,9 @@ func checkArgCountSatisfies(cmd string, args []*resp.RESPData, cond func(int) bo
 	return nil
 }
 
-// HandleCOMMANDDOCS handles the response after redis-cli sends "COMMAND DOCS" when a client connects by returning an empty array for now. 
+// HandleCOMMANDDOCS handles the response after redis-cli sends "COMMAND DOCS" when a client connects by returning an empty array for now.
 // It returns an error if the message contained in args starts with "COMMAND" but is not followed by "DOCS".
 func (h *CommandHandler) HandleCOMMANDDOCS(args []*resp.RESPData) (*resp.RESPData, error) {
-	
 
 	if err := checkArgCountEquals("command", args, 2); err != nil {
 		return nil, err
@@ -71,7 +78,7 @@ func (h *CommandHandler) HandleCOMMANDDOCS(args []*resp.RESPData) (*resp.RESPDat
 	}, nil
 }
 
-// HandleECHO handles a command in the form "ECHO message" by returning back the given message. 
+// HandleECHO handles a command in the form "ECHO message" by returning back the given message.
 // It returns an error if the message contained in args does not have the approproate number of parts (2 in this case).
 func (h *CommandHandler) HandleECHO(args []*resp.RESPData) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("echo", args, 2); err != nil {
@@ -80,16 +87,16 @@ func (h *CommandHandler) HandleECHO(args []*resp.RESPData) (*resp.RESPData, erro
 	return args[1], nil
 }
 
-// HandlePING handles the "PING" command. 
-// If in subscribe mode, it returns a RESP array with bulk string elements "pong" followed by "". 
-// Otherwise, it returns "PONG" as a bulk string. 
+// HandlePING handles the "PING" command.
+// If in subscribe mode, it returns a RESP array with bulk string elements "pong" followed by "".
+// Otherwise, it returns "PONG" as a bulk string.
 // It returns an error if the message contained in args contains other arguments following "PING".
-func (h *CommandHandler) HandlePING(args []*resp.RESPData, inSubscribeMode bool) (*resp.RESPData, error) {
+func (h *CommandHandler) HandlePING(args []*resp.RESPData, c *client.Client) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("ping", args, 1); err != nil {
 		return nil, err
 	}
 
-	if !inSubscribeMode {
+	if !c.IsInSubscribeMode() {
 		return resp.ConvertSimpleStringToRESP("PONG"), nil
 	}
 
@@ -97,138 +104,123 @@ func (h *CommandHandler) HandlePING(args []*resp.RESPData, inSubscribeMode bool)
 
 }
 
-// HandleQUIT handles the "QUIT" command. 
-// It returns an error if the message contained in args contains other arguments following "QUIT". 
+// HandleQUIT handles the "QUIT" command, which allows the client to exit subscribe mode.
+// It returns an error if the message contained in args contains other arguments following "QUIT".
 // Otherwise, it returns "OK" as a simple string.
-func (h *CommandHandler) HandleQUIT(args []*resp.RESPData) (*resp.RESPData, error) {
+func (h *CommandHandler) HandleQUIT(args []*resp.RESPData, c *client.Client) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("quit", args, 1); err != nil {
 		return nil, err
 	}
 
+	c.SetSubscribeMode(false)
 	return resp.ConvertSimpleStringToRESP("OK"), nil
 
 }
 
-// HandleEXEC handles the "EXEC" command. 
-// It executes all commands in the client's transaction sequentially - where the client is represented by its unique network connection conn - 
-// and returns an array containing each command's output, which is either a successful message or an error, as a *RESPData instance. 
+// HandleEXEC handles the "EXEC" command.
+// It executes all commands in the client's transaction sequentially - where the client is represented by its unique network connection conn -
+// and returns an array containing each command's output, which is either a successful message or an error, as a *RESPData instance.
 //
 // It returns an error if:
-//	- the message contained in args contains other arguments following "EXEC".
-//  - the client made the EXEC command without being in transaction mode (by executing MULTI).
-func (h *CommandHandler) HandleEXEC(args []*resp.RESPData, conn net.Conn) (*resp.RESPData, error) {
+//   - the message contained in args contains other arguments following "EXEC".
+//   - the client made the EXEC command without being in transaction mode (by executing MULTI).
+func (h *CommandHandler) HandleEXEC(args []*resp.RESPData, c *client.Client) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("exec", args, 1); err != nil {
 		return nil, err
 	}
 
 	// Check if connection already in the process of making transaction; if not, return error
-	h.db.Lock()
-	commands, ok := h.db.GetTransaction(conn)
-	if !ok {
-		h.db.Unlock()
+	if !c.IsInTransactionMode() {
 		return nil, fmt.Errorf("ERR EXEC without MULTI")
 	}
-
-	// Delete the transaction
-	h.db.DeleteTransaction(conn)
-	h.db.Unlock()
 
 	// Allocate structure to hold array of transaction command outputs
 	ret := &resp.RESPData{Type: resp.Array, ListRESPData: make([]*resp.RESPData, 0)}
 
 	// Iterate through each command in the transaction
-	for _, c := range commands {
+	for command, err := c.PopFromTransaction(); err == nil; command, err = c.PopFromTransaction() {
 		// Capture error from handling command or append the successful output of handling the command.
-		if res, err := h.Handle(c, conn, false); err != nil {
+		if res, err := h.Handle(command, c); err != nil {
 			ret.ListRESPData = append(ret.ListRESPData, resp.ConvertSimpleErrorToRESP(err.Error()))
 		} else {
 			ret.ListRESPData = append(ret.ListRESPData, res)
 		}
-
 	}
 
+	c.EndTransaction()
 	return ret, nil
 }
 
-// HandleMULTI handles the "MULTI" command. 
-// It starts a transaction for the client - where the client is represented by its unique network connection conn - 
+// HandleMULTI handles the "MULTI" command.
+// It starts a transaction for the client - where the client is represented by its unique network connection conn -
 // if they are not already in one, and returns "OK" as a simple string on success.
 //
 // It returns an error if:
-//	- the message contained in args contains other arguments following "MULTI".
-//  - the client is already in the middle of a transaction.
-func (h *CommandHandler) HandleMULTI(args []*resp.RESPData, conn net.Conn) (*resp.RESPData, error) {
+//   - the message contained in args contains other arguments following "MULTI".
+//   - the client is already in the middle of a transaction.
+func (h *CommandHandler) HandleMULTI(args []*resp.RESPData, c *client.Client) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("multi", args, 1); err != nil {
 		return nil, err
 	}
-	// Create new transaction if nonexistent
-	h.db.Lock()
-	defer h.db.Unlock()
-	if _, ok := h.db.GetTransaction(conn); !ok {
-		h.db.CreateTransaction(conn)
-		return resp.ConvertSimpleStringToRESP("OK"), nil
-	}
 
 	// Cannot call MULTI while already in a transaction
-	return nil, fmt.Errorf("ERR cannot call MULTI while already in a transaction")
+	if c.IsInTransactionMode() {
+		c.EndTransaction()
+		return nil, fmt.Errorf("ERR cannot call MULTI while already in a transaction")
+	}
 
+	// Create new transaction if nonexistent
+	c.StartTransaction()
+	return resp.ConvertSimpleStringToRESP("OK"), nil
 }
 
-// HandleDISCARD handles the "DISCARD" command. 
-// If the client is in a transaction - where the client is represented by its unique network connection conn - 
-// it will discard the client's transaction and not execute any of its commands, bringing them back to the normal non-transactional mode, 
+// HandleDISCARD handles the "DISCARD" command.
+// If the client is in a transaction - where the client is represented by its unique network connection conn -
+// it will discard the client's transaction and not execute any of its commands, bringing them back to the normal non-transactional mode,
 // and will return "OK" as a simple string on success.
 //
 // It returns an error if:
-//	- the message contained in args contains other arguments following "DISCARD".
-//  - the client is not in the middle of a transaction.
-func (h *CommandHandler) HandleDISCARD(args []*resp.RESPData, conn net.Conn) (*resp.RESPData, error) {
+//   - the message contained in args contains other arguments following "DISCARD".
+//   - the client is not in the middle of a transaction.
+func (h *CommandHandler) HandleDISCARD(args []*resp.RESPData, c *client.Client) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("discard", args, 1); err != nil {
 		return nil, err
 	}
-	h.db.Lock()
-	defer h.db.Unlock()
 
 	// Error if not in transaction
-	if _, ok := h.db.GetTransaction(conn); !ok {
+	if !c.IsInTransactionMode() {
 		return nil, fmt.Errorf("ERR DISCARD without MULTI")
 	}
 
 	// Otherwise, simply delete the transaction
-	h.db.DeleteTransaction(conn)
+	c.EndTransaction()
 	return resp.ConvertSimpleStringToRESP("OK"), nil
 }
 
-// HandleSUBSCRIBE handles the "SUBSCRIBE" command, where the command is in the format: "SUBSCRIBE channel". 
+// HandleSUBSCRIBE handles the "SUBSCRIBE" command, where the command is in the format: "SUBSCRIBE channel".
 //
-// It subscribes the client - where the client is represented by its unique network connection conn - 
-// to the channel name specified in the second element of args, allowing it to immediately receive any values published to that channel 
-// from other clients. It returns an array with three elements: the word "subscribe", the name of the channel 
-// to subscribe to, and the updated number of channels the client is subscribed to. 
+// It subscribes the client - where the client is represented by its unique network connection conn -
+// to the channel name specified in the second element of args, allowing it to immediately receive any values published to that channel
+// from other clients. It returns an array with three elements: the word "subscribe", the name of the channel
+// to subscribe to, and the updated number of channels the client is subscribed to.
 // It returns an error if the message contained in args doesn't contain exactly two elements.
-func (h *CommandHandler) HandleSUBSCRIBE(args []*resp.RESPData, conn net.Conn) (*resp.RESPData, error) {
+func (h *CommandHandler) HandleSUBSCRIBE(args []*resp.RESPData, c *client.Client) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("subscribe", args, 2); err != nil {
 		return nil, err
 	}
 
 	pubChanName := args[1].String()
+	if !c.IsInSubscribeMode() {
+		c.SetSubscribeMode(true)
+	}
 
 	h.db.Lock()
-
-	// Add this client to publisher client list
-	h.db.AddSubscriber(pubChanName, conn)
-
-	// Create a channel (if doesn't exist yet) for this client to receive values
-	h.db.CreateReceiver(conn)
-
-	// Add publisher channel name to list of subscribed channels for this client
-	h.db.AddPublisher(conn, pubChanName)
-
-	// Save number of subscriptions for output
-	pubs, _ := h.db.GetPublishers(conn)
-	numSubscribed := pubs.Length()
-
-	h.db.Unlock()
+	defer h.db.Unlock()
+	h.db.AddSubscriber(c, pubChanName)
+	clientPubs, _ := c.GetPublishers()
+	numSubscribed := clientPubs.Length()
+	
+	
 
 	ret := &resp.RESPData{Type: resp.Array, ListRESPData: make([]*resp.RESPData, 0)}
 	ret.ListRESPData = append(ret.ListRESPData,
@@ -238,45 +230,40 @@ func (h *CommandHandler) HandleSUBSCRIBE(args []*resp.RESPData, conn net.Conn) (
 	return ret, nil
 }
 
-// HandleUNSUBSCRIBE handles the "UNSUBSCRIBE" command, where the command is in the format: "UNSUBSCRIBE channel". 
+// HandleUNSUBSCRIBE handles the "UNSUBSCRIBE" command, where the command is in the format: "UNSUBSCRIBE channel".
 //
-// It unsubscribes the client - where the client is represented by its unique network connection conn - 
-// to the channel name specified in the second element of args, so that it no longer receives any values published to that channel 
-// from other clients. It returns an array with three elements: the word "unsubscribe", the name of the channel 
-// to subscribe to, and the updated number of channels the client is subscribed to. 
+// It unsubscribes the client - where the client is represented by its unique network connection conn -
+// to the channel name specified in the second element of args, so that it no longer receives any values published to that channel
+// from other clients. It returns an array with three elements: the word "unsubscribe", the name of the channel
+// to subscribe to, and the updated number of channels the client is subscribed to.
 // It returns an error if the message contained in args doesn't contain exactly two elements.
-func (h *CommandHandler) HandleUNSUBSCRIBE(args []*resp.RESPData, conn net.Conn) (*resp.RESPData, error) {
+func (h *CommandHandler) HandleUNSUBSCRIBE(args []*resp.RESPData, c *client.Client) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("unsubscribe", args, 2); err != nil {
 		return nil, err
 	}
 
 	pubChanName := args[1].String()
-	remSubscribed := 0
-
 	h.db.Lock()
-	h.db.RemovePublisherFromSubscriber(conn, pubChanName)
-	h.db.RemoveSubscriberFromPublisher(pubChanName, conn)
-	if pubs, ok := h.db.GetPublishers(conn); ok {
-		remSubscribed = pubs.Length()
-	}
-
-	h.db.Unlock()
+	defer h.db.Unlock()
+	h.db.RemoveSubscriber(c, pubChanName)
+	clientPubs, _ := c.GetPublishers()
+	numSubscribed := clientPubs.Length()
 
 	ret := &resp.RESPData{Type: resp.Array, ListRESPData: make([]*resp.RESPData, 0)}
 	ret.ListRESPData = append(ret.ListRESPData,
 		resp.ConvertBulkStringToRESP("unsubscribe"),
 		resp.ConvertBulkStringToRESP(pubChanName),
-		resp.ConvertIntToRESP(int64(remSubscribed)),
+		resp.ConvertIntToRESP(int64(numSubscribed)),
 	)
 
 	return ret, nil
 
 }
 
-// HandlePUBLISH handles the "PUBLISH" command, where the command is in the format: "PUBLISH channel value". 
+// HandlePUBLISH handles the "PUBLISH" command, where the command is in the format: "PUBLISH channel value".
 //
-// It publishes the specified value to the specified channel, immediately notifying all clients who are subscribed to that 
-// channel with the value. 
+// It publishes the specified value to the specified channel, immediately notifying all clients who are subscribed to that
+// channel with the value.
 // It returns the number of clients subscribed to that channel on success.
 // It returns an error if the message contained in args doesn't contain exactly three elements.
 func (h *CommandHandler) HandlePUBLISH(args []*resp.RESPData) (*resp.RESPData, error) {
@@ -289,43 +276,42 @@ func (h *CommandHandler) HandlePUBLISH(args []*resp.RESPData) (*resp.RESPData, e
 
 	numSubscribers := 0
 	h.db.Lock()
+	defer h.db.Unlock()
 	if subs, ok := h.db.GetSubscribers(channelName); ok {
 		numSubscribers = subs.Length()
-		for conn := range subs.Items() {
-			go func() {
-				receiver, ok := h.db.GetReceiver(conn)
-				// Make sure client still exists
-				if !ok {
+		for subscribedClient := range subs.Items() {
+			go func(c *client.Client) {
+				// Make sure client still exists; they might have disconnected
+				if c.PubSubChan == nil {
 					return
 				}
 				select {
-				case receiver <- messageContents:
-				default: // skip slow subscribers
+				case c.PubSubChan <- messageContents:
+				default: // skip clients that are slow
 				}
 
-			}()
+			}(subscribedClient)
 		}
 	}
-	h.db.Unlock()
 
 	return resp.ConvertIntToRESP(int64(numSubscribers)), nil
 
 }
 
-// HandleSET handles the "SET" command, where the command is in the format: "SET key value [EX seconds | PX milliseconds]". 
+// HandleSET handles the "SET" command, where the command is in the format: "SET key value [EX seconds | PX milliseconds]".
 //
-// It sets the value of the specified key to the value specified by the user, with an optional specified expiration time 
-// (in seconds or milliseconds) after which the key will no longer exist. If the key doesn't exist, it will create the key and 
-// set it to the specified value. 
+// It sets the value of the specified key to the value specified by the user, with an optional specified expiration time
+// (in seconds or milliseconds) after which the key will no longer exist. If the key doesn't exist, it will create the key and
+// set it to the specified value.
 //
-// It returns "OK" as a simple string on success. 
+// It returns "OK" as a simple string on success.
 //
 // It returns an error if:
-//	- the message doesn't conform to the SET command structure specified above
-//	- a stream, list, or any other non-string data type with the same key name already exists
-//	- the expiration time is not an integer or is a negative integer
+//   - the message doesn't conform to the SET command structure specified above
+//   - a stream, list, or any other non-string data type with the same key name already exists
+//   - the expiration time is not an integer or is a negative integer
 func (h *CommandHandler) HandleSET(args []*resp.RESPData) (*resp.RESPData, error) {
-	if err := checkArgCountSatisfies("set", args, func(len int) bool {return len == 3 || len == 5}, "Number of arguments should be either 3 or 5"); err != nil {
+	if err := checkArgCountSatisfies("set", args, func(len int) bool { return len == 3 || len == 5 }, "Number of arguments should be either 3 or 5"); err != nil {
 		return nil, err
 	}
 
@@ -354,9 +340,9 @@ func (h *CommandHandler) HandleSET(args []*resp.RESPData) (*resp.RESPData, error
 	return resp.ConvertSimpleStringToRESP("OK"), nil
 }
 
-// HandleGET handles the "GET" command, where the command is in the format: "GET key". 
+// HandleGET handles the "GET" command, where the command is in the format: "GET key".
 //
-// It returns the value of the specified key if it exists, otherwise it returns the null bulk string. 
+// It returns the value of the specified key if it exists, otherwise it returns the null bulk string.
 // It returns an error if the message contained in args doesn't conform to the GET command structure specified above.
 func (h *CommandHandler) HandleGET(args []*resp.RESPData) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("get", args, 2); err != nil {
@@ -368,21 +354,21 @@ func (h *CommandHandler) HandleGET(args []*resp.RESPData) (*resp.RESPData, error
 	defer h.db.Unlock()
 	val, ok := h.db.GetString(key)
 	if !ok {
-		return &resp.RESPData{Type: resp.BulkString}, nil	// null bulk string
+		return &resp.RESPData{Type: resp.BulkString}, nil // null bulk string
 	}
 	return resp.ConvertBulkStringToRESP(val), nil
 }
 
-// HandleINCR handles the "INCR" command, where the command is in the format: "INCR key". 
+// HandleINCR handles the "INCR" command, where the command is in the format: "INCR key".
 //
-// If the key exists and its value can be incremented to produce a signed, base-10 64-bit integer, the value gets incremented by one. 
+// If the key exists and its value can be incremented to produce a signed, base-10 64-bit integer, the value gets incremented by one.
 // If the key doesn't exist yet, a new key is created with value set to one.
-// The method returns the new value of the key on success. 
-// 
+// The method returns the new value of the key on success.
+//
 // It returns an error if:
-//	- the message contained in args doesn't conform to the INCR command structure specified above
-//	- the key doesn't exist yet but a stream, list, or any other non-string data type with the same key name already exists
-//	- the key exists but cannot be represented as a signed, base-10 64-bit integer, or is the max possible signed, base-10 64-bit integer.
+//   - the message contained in args doesn't conform to the INCR command structure specified above
+//   - the key doesn't exist yet but a stream, list, or any other non-string data type with the same key name already exists
+//   - the key exists but cannot be represented as a signed, base-10 64-bit integer, or is the max possible signed, base-10 64-bit integer.
 func (h *CommandHandler) HandleINCR(args []*resp.RESPData) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("incr", args, 2); err != nil {
 		return nil, err
@@ -400,15 +386,15 @@ func (h *CommandHandler) HandleINCR(args []*resp.RESPData) (*resp.RESPData, erro
 	if !ok && !h.db.CanSetString(key) {
 		return nil, fmt.Errorf("ERR key '%s' with non-string data type already exists", key)
 
-	// Otherwise if the key doesn't exist and is available, set it to 1
+		// Otherwise if the key doesn't exist and is available, set it to 1
 	} else if !ok {
 		newVal = 1
 
-	// Otherwise if the key exists but can't be represented as a 64-bit integer, return an error
+		// Otherwise if the key exists but can't be represented as a 64-bit integer, return an error
 	} else if intVal, err := strconv.ParseInt(val, 10, 64); intVal == math.MaxInt64 || err != nil {
 		return nil, fmt.Errorf("ERR key %s with value %s cannot be incremented and represented as a signed base-10 64-bit integer", key, val)
 
-	// Otherwise we can increment the key
+		// Otherwise we can increment the key
 	} else {
 		newVal = intVal + 1
 	}
@@ -417,18 +403,18 @@ func (h *CommandHandler) HandleINCR(args []*resp.RESPData) (*resp.RESPData, erro
 	return resp.ConvertIntToRESP(newVal), nil
 }
 
-// HandleRPUSH handles the "RPUSH" command, where the command is in the format: "RPUSH key element [element ...]". 
+// HandleRPUSH handles the "RPUSH" command, where the command is in the format: "RPUSH key element [element ...]".
 //
-// It retrieves the list associated with the specified key and sequentially pushes the specified elements to the tail of the list. 
-// If the specified list key doesn't exist, it creates a fresh list with the specified elements in order. 
-// It returns the new length of the list on success as integer. 
+// It retrieves the list associated with the specified key and sequentially pushes the specified elements to the tail of the list.
+// If the specified list key doesn't exist, it creates a fresh list with the specified elements in order.
+// It returns the new length of the list on success as integer.
 //
-// A side effect of this function is that after it's done pushing elements, it notifies the first queued client 
-// who called BLPOP on this list (BLPOP is a blocking operation that forces a client to wait until an element is pushed to a desired list). 
+// A side effect of this function is that after it's done pushing elements, it notifies the first queued client
+// who called BLPOP on this list (BLPOP is a blocking operation that forces a client to wait until an element is pushed to a desired list).
 //
 // It returns an error if:
-//	- the message contained in args doesn't conform to the RPUSH command structure specified above
-//	- the key doesn't exist yet but a stream, string, or any other non-list data type with the same key name already exists
+//   - the message contained in args doesn't conform to the RPUSH command structure specified above
+//   - the key doesn't exist yet but a stream, string, or any other non-list data type with the same key name already exists
 func (h *CommandHandler) HandleRPUSH(args []*resp.RESPData) (*resp.RESPData, error) {
 	if err := checkArgCountGreaterThan("rpush", args, 2); err != nil {
 		return nil, err
@@ -437,53 +423,60 @@ func (h *CommandHandler) HandleRPUSH(args []*resp.RESPData) (*resp.RESPData, err
 	// The name of the array for which we want to push
 	key := args[1].String()
 
+	newList, err := func() ([]string, error) {
+		h.db.Lock()
+		defer h.db.Unlock()
+
+		// Make sure no other data type has the same key
+		if !h.db.CanSetList(key) {
+			return nil, fmt.Errorf("ERR key '%s' with non-list data type already exists", key)
+		}
+
+		// If array doesn't exist, create an empty array belonging to that key
+		if _, ok := h.db.GetList(key); !ok {
+			h.db.SetList(key, make([]string, 0))
+		}
+		// Add all elements to the array
+		for i := 2; i < len(args); i++ {
+			elem := args[i].String()
+			h.db.AppendToList(key, elem)
+		}
+
+		listData, _ := h.db.GetList(key)
+		return listData, nil
+	}()
+	
+	if err != nil {
+		return nil, err
+	}
+	
 	h.db.Lock()
 	defer h.db.Unlock()
 
-	// Make sure no other data type has the same key
-	if !h.db.CanSetList(key) {
-		return nil, fmt.Errorf("ERR key '%s' with non-list data type already exists", key)
-	}
-
-	// If array doesn't exist, create an empty array belonging to that key
-	if _, ok := h.db.GetList(key); !ok {
-		h.db.SetList(key, make([]string, 0))
-	}
-
-	// Add all elements to the array
-	for i := 2; i < len(args); i++ {
-		elem := args[i].String()
-		h.db.AppendToList(key, elem)
-	}
-
-	listData, _ := h.db.GetList(key)
-
 	// If there are clients blocked on a BLPOP, send first elem through the first channel
-	if waitChans, ok := h.db.GetBLPOPWaiters(key); ok && len(waitChans) > 0 {
-		popped := listData[0]
-		waitChans[0] <- popped // Send the popped element through the channel to the client who called BLPOP first
-		close(waitChans[0])    // Close the channel
-
-		h.db.PopBLPOPWaiter(key) // Remove client off the queue
+	if client, ok := h.db.GetNextBLPOPWaiter(key); ok {
+		popped := args[2]
+		client.BlockOpChan <- popped // Send the popped element through the channel to the client who called BLPOP first
+		h.db.PopBLPOPWaiter(key, client) // Remove client off the queue
 	}
 
 	// Return length of array
-	return resp.ConvertIntToRESP(int64(len(listData))), nil
+	return resp.ConvertIntToRESP(int64(len(newList))), nil
 
 }
 
-// HandleLPUSH handles the "LPUSH" command, where the command is in the format: "LPUSH key element [element ...]". 
+// HandleLPUSH handles the "LPUSH" command, where the command is in the format: "LPUSH key element [element ...]".
 //
-// It retrieves the list associated with the specified key and sequentially pushes the specified elements to the head of the list. 
-// If the specified list key doesn't exist, it creates a fresh list with the specified elements added to the head of the list in order. 
-// It returns the new length of the list on success as integer. 
+// It retrieves the list associated with the specified key and sequentially pushes the specified elements to the head of the list.
+// If the specified list key doesn't exist, it creates a fresh list with the specified elements added to the head of the list in order.
+// It returns the new length of the list on success as integer.
 //
-// A side effect of this function is that after it's done pushing elements, it notifies the first queued client 
-// who called BLPOP on this list (BLPOP is a blocking operation that forces a client to wait until an element is pushed to a desired list). 
+// A side effect of this function is that after it's done pushing elements, it notifies the first queued client
+// who called BLPOP on this list (BLPOP is a blocking operation that forces a client to wait until an element is pushed to a desired list).
 //
 // It returns an error if:
-//	- the message contained in args doesn't conform to the LPUSH command structure specified above
-//	- the key doesn't exist yet but a stream, string, or any other non-list data type with the same key name already exists
+//   - the message contained in args doesn't conform to the LPUSH command structure specified above
+//   - the key doesn't exist yet but a stream, string, or any other non-list data type with the same key name already exists
 func (h *CommandHandler) HandleLPUSH(args []*resp.RESPData) (*resp.RESPData, error) {
 	if err := checkArgCountGreaterThan("lpush", args, 2); err != nil {
 		return nil, err
@@ -492,49 +485,54 @@ func (h *CommandHandler) HandleLPUSH(args []*resp.RESPData) (*resp.RESPData, err
 	// The name of the array for which we want to push
 	key := args[1].String()
 
+	newList, err := func() ([]string, error) {
+		h.db.Lock()
+		defer h.db.Unlock()
+		
+		// Make sure no other data type has the same key
+		if !h.db.CanSetList(key) {
+			return nil, fmt.Errorf("ERR key '%s' with non-list data type already exists", key)
+		}
+
+		// If array doesn't exist, create an empty array belonging to that key
+		if _, ok := h.db.GetList(key); !ok {
+			h.db.SetList(key, make([]string, 0))
+		}
+
+		// Prepend elements to array
+		for i := 2; i < len(args); i++ {
+			elem := args[i].String()
+			h.db.PrependToList(key, elem)
+		}
+		listData, _ := h.db.GetList(key)
+		return listData, nil
+	}()
+
+	if err != nil {
+		return nil, err
+	}
+
 	h.db.Lock()
 	defer h.db.Unlock()
-
-	// Make sure no other data type has the same key
-	if !h.db.CanSetList(key) {
-		return nil, fmt.Errorf("ERR key '%s' with non-list data type already exists", key)
-	}
-
-	// If array doesn't exist, create an empty array belonging to that key
-
-	if _, ok := h.db.GetList(key); !ok {
-		h.db.SetList(key, make([]string, 0))
-	}
-
-	// Prepend elements to array
-	for i := 2; i < len(args); i++ {
-		elem := args[i].String()
-		h.db.PrependToList(key, elem)
-	}
-
-	listData, _ := h.db.GetList(key)
-
 	// If there are clients blocked on a BLPOP, send first elem through the first channel
-	if waitChans, ok := h.db.GetBLPOPWaiters(key); ok && len(waitChans) > 0 {
-		popped := listData[0]
-		waitChans[0] <- popped // Send the popped element through the channel to the client who called BLPOP first
-		close(waitChans[0])    // Close the channel
-
-		h.db.PopBLPOPWaiter(key) // Remove client off the queue
+	if client, ok := h.db.GetNextBLPOPWaiter(key); ok {
+		popped := args[len(args)-1]
+		client.BlockOpChan <- popped // Send the popped element through the channel to the client who called BLPOP first
+		h.db.PopBLPOPWaiter(key, client) // Remove client off the queue
 	}
-
-	return resp.ConvertIntToRESP(int64(len(listData))), nil
+	
+	return resp.ConvertIntToRESP(int64(len(newList))), nil
 
 }
 
-// HandleLRANGE handles the "LRANGE" command, where the command is in the format: "LRANGE key start stop". 
+// HandleLRANGE handles the "LRANGE" command, where the command is in the format: "LRANGE key start stop".
 //
-// It returns a list containing elements associated with the specified list key whose indices fall between the start and stop indices, both inclusive. 
-// Negative indices indicate offset from the end of the list (e.g. -1 = last element). 
+// It returns a list containing elements associated with the specified list key whose indices fall between the start and stop indices, both inclusive.
+// Negative indices indicate offset from the end of the list (e.g. -1 = last element).
 // If the list key doesn't exist, or if the range is invalid, it returns an empty array.
 // It returns an error if:
-//	- the message contained in args doesn't conform to the LRANGE command structure specified above
-//	- start and stop aren't valid signed base 10 64-bit integers
+//   - the message contained in args doesn't conform to the LRANGE command structure specified above
+//   - start and stop aren't valid signed base 10 64-bit integers
 func (h *CommandHandler) HandleLRANGE(args []*resp.RESPData) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("lrange", args, 4); err != nil {
 		return nil, err
@@ -554,7 +552,7 @@ func (h *CommandHandler) HandleLRANGE(args []*resp.RESPData) (*resp.RESPData, er
 	// Start and/or stop could be invalid integer
 	start, errStart := strconv.Atoi(args[2].String())
 	stop, errLow := strconv.Atoi(args[3].String())
-	
+
 	if errStart != nil {
 		return nil, fmt.Errorf("ERR: %v", errStart)
 	}
@@ -584,9 +582,9 @@ func (h *CommandHandler) HandleLRANGE(args []*resp.RESPData) (*resp.RESPData, er
 
 }
 
-// HandleLLEN handles the "LLEN" command, where the command is in the format: "LLEN key". 
+// HandleLLEN handles the "LLEN" command, where the command is in the format: "LLEN key".
 //
-// It returns the length of the list associated with the specified list key, or 0 if the list key doesn't exist. 
+// It returns the length of the list associated with the specified list key, or 0 if the list key doesn't exist.
 // It returns an error if the message contained in args doesn't conform to the LLEN command structure specified above.
 func (h *CommandHandler) HandleLLEN(args []*resp.RESPData) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("llen", args, 2); err != nil {
@@ -599,29 +597,29 @@ func (h *CommandHandler) HandleLLEN(args []*resp.RESPData) (*resp.RESPData, erro
 	defer h.db.Unlock()
 
 	// If list doesn't exist, return 0
-	arrResp, ok := h.db.GetList(arrName)
+	arr, ok := h.db.GetList(arrName)
 	if !ok {
 		return resp.ConvertIntToRESP(0), nil
 	}
 
 	// Return length of list
-	return resp.ConvertIntToRESP(int64(len(arrResp))), nil
+	return resp.ConvertIntToRESP(int64(len(arr))), nil
 
 }
 
-// HandleBLPOP handles the "BLPOP" command, where the command is in the format: "BLPOP key timeout". 
+// HandleBLPOP handles the "BLPOP" command, where the command is in the format: "BLPOP key timeout".
 //
-// It blocks the client from doing anything until another client pushes an element to the specified list key via LPUSH or RPUSH, 
-// where the timeout is a double float value indicating the max amount of time to block. If timeout value is set to 0, 
-// the client is blocked indefinitely. If the timeout expires, it returns a null bulk array. Otherwise, if the list at the specified key 
-// gets or has a value while the timeout has not expired, and the client is the first in the queue of all clients who performed 
-// BLPOP on this key, then the element at the head of the list is popped, and the function returns 
+// It blocks the client from doing anything until another client pushes an element to the specified list key via LPUSH or RPUSH,
+// where the timeout is a double float value indicating the max amount of time to block. If timeout value is set to 0,
+// the client is blocked indefinitely. If the timeout expires, it returns a null bulk array. Otherwise, if the list at the specified key
+// gets or has a value while the timeout has not expired, and the client is the first in the queue of all clients who performed
+// BLPOP on this key, then the element at the head of the list is popped, and the function returns
 // a two-element array with the name of the key followed by the popped element.
 // If the list key doesn't exist, or if the range is invalid, it returns an empty array.
 // It returns an error if:
-//	- the message contained in args doesn't conform to the BLPOP command structure specified above
-//	- timeout isn't a non-negative double float value.
-func (h *CommandHandler) HandleBLPOP(args []*resp.RESPData) (*resp.RESPData, error) {
+//   - the message contained in args doesn't conform to the BLPOP command structure specified above
+//   - timeout isn't a non-negative double float value.
+func (h *CommandHandler) HandleBLPOP(args []*resp.RESPData, c *client.Client) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("blpop", args, 3); err != nil {
 		return nil, err
 	}
@@ -638,29 +636,41 @@ func (h *CommandHandler) HandleBLPOP(args []*resp.RESPData) (*resp.RESPData, err
 		return nil, fmt.Errorf("ERR duration cannot be negative")
 	}
 
-	h.db.Lock()
+	popped, foundElemImmediately := func()(string, bool) {
+		h.db.Lock()
+		defer h.db.Unlock()
+		data, ok := h.db.GetList(key)
 
-	data, ok := h.db.GetList(key)
 
-	// If the array exists and has elements, pop and return immediately
-	if ok && len(data) > 0 {
-		poppedVal := data[0]
-		h.db.SetList(key, data[1:])
-		h.db.Unlock()
-		return resp.ConvertListToRESP([]string{key, poppedVal}), nil
+		// If the array exists and has elements, pop and return immediately
+		// No need to add client to queue of BLPOP waiters if this is the case
+		if ok && len(data) > 0 {
+			popped, _ := h.db.PopLeftList(key)
+			return popped, true
+		}
+
+		// Add client to list of blocked clients on this array
+		h.db.AddBLPOPWaiter(key, c)
+		return "", false
+	}()
+
+	if foundElemImmediately {
+		return resp.ConvertListToRESP([]string{key, popped}), nil
 	}
-
-	// Add client to list of blocked clients on this array
-	c := h.db.AddBLPOPWaiter(key)
-	h.db.Unlock() // Make sure to remove mutex so other clients can modify DB while this one is blocked
 
 	// If duration is 0, block indefinitely until channel receives value
 	if duration == 0.0 {
-		poppedVal := <-c
+		poppedVal, ok := <-c.BlockOpChan
+		if !ok {	// check to see if client's channel has become nil or is closed on disconnect
+			return nil, fmt.Errorf("client disconnected")
+		}
 		h.db.Lock()
 		defer h.db.Unlock()
 		h.db.PopLeftList(key) // Remove the popped element from the array
-		return resp.ConvertListToRESP([]string{key, poppedVal}), nil
+		return &resp.RESPData{
+			Type: resp.Array,
+			ListRESPData: []*resp.RESPData{resp.ConvertBulkStringToRESP(key), poppedVal},
+		}, nil
 	}
 
 	// Otherwise block until channel receives value or timeout occurs
@@ -670,36 +680,35 @@ func (h *CommandHandler) HandleBLPOP(args []*resp.RESPData) (*resp.RESPData, err
 		// Timeout occurred, remove client from waiters list
 		h.db.Lock()
 		defer h.db.Unlock()
-		// Remove channel from waiters list
-		waitChans, _ := h.db.GetBLPOPWaiters(key)
-		for i, chanVal := range waitChans {
-			if chanVal == c {
-				h.db.RemoveBLPOPWaiter(key, i)
-				break
-			}
-		}
+		h.db.RemoveBLPOPWaiter(key, c)
 		return &resp.RESPData{Type: resp.Array, ListRESPData: nil}, nil
 
-	case poppedVal := <-c:
+	case poppedVal, ok := <-c.BlockOpChan:
+		if !ok {	// check to see if client's channel has become nil or is closed on disconnect
+			return nil, fmt.Errorf("client disconnected")
+		}
 		// Successfully received popped value
 		h.db.Lock()
 		defer h.db.Unlock()
 		h.db.PopLeftList(key) // Remove the popped element from the array
-		return resp.ConvertListToRESP([]string{key, poppedVal}), nil
+		return &resp.RESPData{
+			Type: resp.Array,
+			ListRESPData: []*resp.RESPData{resp.ConvertBulkStringToRESP(key), poppedVal},
+		}, nil
 
 	}
 
 }
 
-// HandleLPOP handles the "LPOP" command, where the command is in the format: "LPOP key [count]". 
+// HandleLPOP handles the "LPOP" command, where the command is in the format: "LPOP key [count]".
 //
-// It removes a number of elements specified by the optional count argument (defaults to 1) from the head of the specified list key. 
-// It returns either a bulk string containing the single popped element if the count argument is omitted, or an array containing the 
+// It removes a number of elements specified by the optional count argument (defaults to 1) from the head of the specified list key.
+// It returns either a bulk string containing the single popped element if the count argument is omitted, or an array containing the
 // one or more popped elements, in order of when they were popped, if the count argument is included.
 // If the array with the specified list key doesn't exist, it returns a null bulk string
 // It returns an error if:
-//	- the message contained in args doesn't conform to the LPOP command structure specified above
-//	- count isn't a non-negative signed 64-bit base-10 integer
+//   - the message contained in args doesn't conform to the LPOP command structure specified above
+//   - count isn't a non-negative signed 64-bit base-10 integer
 func (h *CommandHandler) HandleLPOP(args []*resp.RESPData) (*resp.RESPData, error) {
 	if err := checkArgCountBetween("lpop", args, 2, 3); err != nil {
 		return nil, err
@@ -739,19 +748,19 @@ func (h *CommandHandler) HandleLPOP(args []*resp.RESPData) (*resp.RESPData, erro
 		h.db.SetList(arrName, arrResp[numToRemove:])
 	}
 
-	// Return single element if only one was removed and the count argument was omitted
+	// Return single element (as bulk string) if the count argument was omitted
 	if numToRemove == 1 && len(args) == 2 {
 		return resp.ConvertBulkStringToRESP(ret[0]), nil
 	}
-	// Return array of removed elements otherwise
+	// Return array of removed elements if count argument was included otherwise (even if it was 1)
 	return resp.ConvertListToRESP(ret), nil
 
 }
 
-// HandleTYPE handles the "TYPE" command, where the command is in the format: "TYPE key". 
+// HandleTYPE handles the "TYPE" command, where the command is in the format: "TYPE key".
 //
-// As the name suggests, it returns the type (string, list, stream, etc.) of the specified key in simple string format, 
-// where the type is supported in this implementation. 
+// As the name suggests, it returns the type (string, list, stream, etc.) of the specified key in simple string format,
+// where the type is supported in this implementation.
 // If the key doesn't exist, it returns "none" as a simple string.
 // It returns an error if the message contained in args doesn't conform to the TYPE command structure specified above.
 func (h *CommandHandler) HandleTYPE(args []*resp.RESPData) (*resp.RESPData, error) {
@@ -779,12 +788,24 @@ func (h *CommandHandler) HandleTYPE(args []*resp.RESPData) (*resp.RESPData, erro
 }
 
 // HandleXADD handles the "XADD" command, where the command is in the format: "XADD stream_key <* | id> field value [field value ...]".
+//
+// It appends a new stream entry with the given ID containing the specified field-value pairs to the stream associated with the specified stream key.
+// If the stream key doesn't exist, it creates a new stream with the specified entry.
+// It returns the ID of the newly added stream entry as a bulk string on success.
+//
+// A side effect of this function is that after adding the entry, it notifies all clients who are blocked on XREAD calls
+// waiting for new entries on this stream.
+//
+// It returns an error if:
+//   - the message contained in args doesn't conform to the XADD command structure specified above
+//   - the key doesn't exist yet but a string, list, or any other non-stream data type with the same key name already exists
+//   - the specified entry ID is invalid or less than or equal to the last entry ID in the stream
 func (h *CommandHandler) HandleXADD(args []*resp.RESPData) (*resp.RESPData, error) {
-	if err := checkArgCountSatisfies("xadd", args, func(len int) bool {return len >= 5 && len % 2 == 1}, "Number of arguments should be odd and at least 5"); err != nil {
+	if err := checkArgCountSatisfies("xadd", args, func(len int) bool { return len >= 5 && len%2 == 1 }, "Number of arguments should be odd and at least 5"); err != nil {
 		return nil, err
 	}
-	
 
+	// Handle stream key name
 	sname := args[1].String()
 
 	h.db.Lock()
@@ -800,6 +821,7 @@ func (h *CommandHandler) HandleXADD(args []*resp.RESPData) (*resp.RESPData, erro
 		stream = storage.NewStream()
 	}
 
+	// Handle stream ID
 	id := args[2].String()
 
 	// Validate ID provided by user
@@ -808,7 +830,7 @@ func (h *CommandHandler) HandleXADD(args []*resp.RESPData) (*resp.RESPData, erro
 		return nil, err
 	}
 
-	// Populate the stream entry to be added to the stream
+	// Populate the stream entry to be added to the stream (handle key-value pairs)
 	entry := storage.NewStreamEntry(id)
 	for i := 3; i < len(args); i += 2 {
 		key := args[i].String()
@@ -821,34 +843,22 @@ func (h *CommandHandler) HandleXADD(args []*resp.RESPData) (*resp.RESPData, erro
 	h.db.SetStream(sname, stream)
 
 	// Find and wake up all relevant XREAD waiters
-
-	// Those waiting for IDs greater than a specific ID
 	idWaiters, ok := h.db.GetXREADIDWaiters(sname)
 	if ok {
-		for waiterId, chs := range idWaiters {
+		for waiterId, clients := range idWaiters {
 			if storage.CompareStreamIDs(id, waiterId) == 1 {
-				for _, ch := range chs {
-					go func(channel chan *storage.StreamEntry) {
+				for c := range clients.Items() {
+					go func(client *client.Client) {
+						entries := []*storage.StreamEntry{entry}
+						xreadResult := singleXREADresult(sname, entries)
+						clientXreadChans, _ := c.GetXREADIds()
 						select {
-						case channel <- entry:
-						default:
+						case clientXreadChans[sname][waiterId] <- xreadResult:
+						default:	// account for case that client has dropped out
 						}
-					}(ch)
+					}(c)
 				}
 			}
-		}
-	}
-
-	// Those waiting for any new IDs
-	allWaiters, ok := h.db.GetXREADAllWaiters(sname)
-	if ok {
-		for _, ch := range allWaiters {
-			go func(channel chan *storage.StreamEntry) {
-				select {
-				case channel <- entry:
-				default:
-				}
-			}(ch)
 		}
 	}
 
@@ -856,49 +866,71 @@ func (h *CommandHandler) HandleXADD(args []*resp.RESPData) (*resp.RESPData, erro
 	return resp.ConvertBulkStringToRESP(id), nil
 }
 
+// decipherXRANGEid is a helper function that is used to validate and format an ID provided by the client in an XRANGE command.
+// Aside from the main id formatting of "int-int", the special ids "+", "-", or "int" are also valid values in XRANGE, demonstrating
+// the need to handle these cases specially. The function takes the id along with a boolean isStartID indicating whether this is the start
+// or end ID in the XRANGE command, based on which it might format the id differently. It returns the formatted id in "int-int" format on success,
+// or an error if the provided id was somehow invalid to begin with.
+func decipherXRANGEid(id string, isStartID bool) (string, error) {
+	// Handle - and + IDs
+	if id == "-" {
+		return "0-0", nil
+	}
+	if id == "+" {
+		return fmt.Sprintf("%d-%d", math.MaxInt64, math.MaxInt64), nil
+	}
+
+	// Make sure id looks like either int-int or int
+	idParts := strings.Split(id, "-")
+	if !(len(idParts) == 2 || len(idParts) == 1) {
+		return "", fmt.Errorf("ERR invalid ID format") // wrong number of parts
+	}
+	millis, err := strconv.ParseInt(idParts[0], 10, 64)
+	if err != nil { // first part of ID is not a signed base-10 64 bit integer
+		return "", fmt.Errorf("ERR invalid ID format")
+	}
+
+	// Handle case when id just looks like "int"
+	if len(idParts) == 1 && isStartID {
+		return fmt.Sprintf("%d-0", millis), nil
+	} else if len(idParts) == 1 && !isStartID {
+		return fmt.Sprintf("%d-%d", millis, math.MaxInt64), nil
+	}
+
+	// int-int case
+	seqNum, err := strconv.ParseInt(idParts[1], 10, 64)
+	if err != nil { // second part of ID is not a signed base-10 64 bit integer
+		return "", fmt.Errorf("ERR invalid ID format")
+	}
+
+	return fmt.Sprintf("%d-%d", millis, seqNum), nil
+}
+
+// HandleXRANGE handles the "XRANGE" command, where the command is in the format: "XRANGE key start end".
+//
+// It returns an array containing elements from the stream with the specified key whose IDs fall between the start and stop IDs,
+// both inclusive. Special IDs include "+" which indicates the highest possible ID in the stream and "-" which indicates the lowest.
+// If the range is invalid, it returns an empty array.
+//
+// It returns an error if:
+//   - the message contained in args doesn't conform to the XRANGE command structure specified above
+//   - the stream with the specified key does not exist
+//   - the IDs provided are invalid to begin with
 func (h *CommandHandler) HandleXRANGE(args []*resp.RESPData) (*resp.RESPData, error) {
 	if err := checkArgCountEquals("xrange", args, 4); err != nil {
 		return nil, err
 	}
 
 	sname := args[1].String()
-	id1 := args[2].String()
-	id2 := args[3].String()
 
 	// Validate IDs
-	if id1 == "-" {
-		id1 = "0-0"
-	} 
-	if id2 == "+" {
-		id2 = fmt.Sprintf("%d-%d", math.MaxInt, math.MaxInt)
-	} 
-	if args[2].String() != "-" || args[3].String() != "+" {
-		id1Parts := strings.Split(id1, "-")
-		id2Parts := strings.Split(id2, "-")
-		if len(id1Parts) > 2 || len(id2Parts) > 2 {
-			return nil, fmt.Errorf("ERR invalid ID format")
-		}
-
-		millis1, err1 := strconv.Atoi(id1Parts[0])
-		millis2, err2 := strconv.Atoi(id2Parts[0])
-		if err1 != nil || err2 != nil {
-			return nil, fmt.Errorf("ERR invalid ID format")
-		}
-
-		seqNum1, seqNum2 := 0, math.MaxInt
-		if len(id1Parts) == 2 {
-			seqNum1, err1 = strconv.Atoi(id1Parts[1])
-		}
-		if len(id2Parts) == 2 {
-			seqNum2, err2 = strconv.Atoi(id2Parts[1])
-		}
-
-		if err1 != nil || err2 != nil {
-			return nil, fmt.Errorf("ERR invalid ID format")
-		}
-		id1 = fmt.Sprintf("%d-%d", millis1, seqNum1)
-		id2 = fmt.Sprintf("%d-%d", millis2, seqNum2)
-
+	id1, err1 := decipherXRANGEid(args[2].String(), true)
+	id2, err2 := decipherXRANGEid(args[3].String(), false)
+	if err1 != nil {
+		return nil, err1
+	}
+	if err2 != nil {
+		return nil, err2
 	}
 
 	ret := &resp.RESPData{Type: resp.Array, ListRESPData: make([]*resp.RESPData, 0)}
@@ -933,8 +965,24 @@ func (h *CommandHandler) HandleXRANGE(args []*resp.RESPData) (*resp.RESPData, er
 
 }
 
-func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, error) {
-	if err := checkArgCountSatisfies("xadd", args, func(len int) bool {return len >= 4 && len % 2 == 0}, "Number of arguments should be even and at least 4"); err != nil {
+// HandleXREAD handles the "XREAD" command, where the command is in the format:
+// "XREAD [BLOCK milliseconds] STREAMS key1 [key2 ...] id1 [id2 ...]".
+//
+// If the BLOCK option is omitted, it will immediately return an array containing the IDs and key-value pairs
+// of all stream entries for each given stream key whose IDs are greater than the corresponding given stream ID.
+//
+// If the BLOCK option is included, the client will be blocked for the specified number of milliseconds until a relevant stream entry
+// (with ID greater than the specified ID) gets added to one of the specified streams by another client. When in blocking mode,
+// the special ID value "$" can be used to signify that the client wants only the newest values, and "0" indicates indefinite blocking.
+//
+// If no relevant stream entries are found in either mode, it returns the null array.
+//
+// It returns an error if:
+//   - the message contained in args doesn't conform to the XREAD command structure specified above
+//   - any of the provided IDs are invalid
+func (h *CommandHandler) HandleXREAD(args []*resp.RESPData, c *client.Client) (*resp.RESPData, error) {
+	// Check if command is structured correctly
+	if err := checkArgCountSatisfies("xadd", args, func(len int) bool { return len >= 4 && len%2 == 0 }, "Number of arguments should be even and at least 4"); err != nil {
 		return nil, err
 	}
 	if strings.ToLower(args[1].String()) != "streams" && strings.ToLower(args[1].String()) != "block" {
@@ -967,9 +1015,11 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 	firstIdIndex := lastStreamIndex + 1
 
 	// Create map of stream names to order for sorting purposes later on
+	// xread returns results in the order that the client inputted the keys, 
+	// so we need to handle the case that results come in a different order
 	snameToIdx := make(map[string]int)
 
-	// Validate each ID
+	// Validate all IDs first
 	for i := firstIdIndex; i < lastIdIndex+1; i++ {
 		id := args[i].String()
 
@@ -995,12 +1045,16 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 		}
 	}
 
-	type WaitChanResult struct {
-		streamKey string
-		results   []*storage.StreamEntry
-	}
+	// WaitChanResult holds the specific stream entries whose IDs are greater than the client-provided ID for the specific stream key.
+	//type WaitChanResult struct {
+	//	streamKey string
+	//	result	
+	//}
 
-	results := make(chan *WaitChanResult, numStreams)
+	// Make a channel that has sufficient capacity to hold results from all streams.
+	//results := make(chan *resp.RESPData, numStreams)
+	results := make([]*resp.RESPData, numStreams)
+	var wg sync.WaitGroup
 
 	for idx := firstStreamIndex; idx <= lastStreamIndex; idx++ {
 		// Lock DB while checking if stream exists
@@ -1008,18 +1062,22 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 		// For each stream, check if it exists
 		sname := args[idx].String()
 		stream, ok := h.db.GetStream(sname)
+		
+		// if nonblocking and no such stream exists, just skip
 		if !ok && !blocking {
 			h.db.Unlock()
-			return nil, fmt.Errorf("ERR stream with key '%s' does not exist", sname)
+			continue
 		}
+		// otherwise if blocking, and stream doesn't exist, we still have to wait
 		if !ok {
-      		stream = storage.NewStream()
-  		}
+			stream = storage.NewStream()
+		}
 		id := args[idx+numStreams].String()
-
+		
+		wg.Add(1)
 		go func(streamName string, streamId string, stream *storage.Stream) {
-			res := &WaitChanResult{streamKey: streamName, results: make([]*storage.StreamEntry, 0)}
-
+			defer wg.Done()
+			
 			// If this isn't a blocking call, immediately send the relevant stream entries
 			// If this is a blocking call and the stream isn't empty and contains relevant elements, return with the relevant stream entries
 			if streamId != "$" && (!blocking || (blocking && stream.Length() > 0)) {
@@ -1030,67 +1088,48 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 
 				// Either this is a non-blocking call, or we found relevant entries right away
 				if !blocking || i != stream.Length() {
-					res.results = append(res.results, stream.StreamData()[i:]...)
-					results <- res
+					slice, _ := stream.Slice(i)
+					xreadResult := singleXREADresult(streamName, slice)
+					results[idx-firstStreamIndex] = xreadResult
 					return
 				}
 			}
 
-			// Otherwise, create a channel to wait on which XADD will notify when new entries are added
-			receiver := make(chan *storage.StreamEntry)
-
-			// If id = "$", add to list of channels under stream key of xReadAllWaiters
+			// Convert id = "$" to an actual ID
 			if streamId == "$" {
-				h.db.AddXREADAllWaiter(streamName, receiver)
-				// Make sure to remove channel from waiters list once done
-				defer func() {
-					h.db.Lock()
-					defer h.db.Unlock()
-					waiters, _ := h.db.GetXREADAllWaiters(streamName)
-					for i, ch := range waiters {
-						if ch == receiver {
-							h.db.RemoveXREADAllWaiter(streamName, i)
-							break
-						}
-					}
-				}()
+				streamId = "0-0"
+				if stream.Length() > 0 {
+					streamId = stream.EntryAt(stream.Length()-1).GetID()
+				}
+			} 
 
-				// Otherwise add to list of channels under id key under stream key of xReadIdWaiters
-			} else {
-				h.db.AddXREADIDWaiter(streamName, streamId, receiver)
+			// Add to list of channels under id key under stream key of xReadIdWaiters
+			h.db.AddXREADIDWaiter(streamName, streamId, c)
 
-				// Make sure to remove channel from waiters list once done
-				defer func() {
-					h.db.Lock()
-					defer h.db.Unlock()
-					allIdWaiters, _ := h.db.GetXREADIDWaiters(streamName)
-					for i, ch := range allIdWaiters[streamId] {
-						if ch == receiver {
-							h.db.RemoveXREADIDWaiter(streamName, streamId, i)
-							break
-						}
-					}
-				}()
-			}
-
+			// Make sure to remove channel from waiters list once done
+			defer func() {
+				h.db.Lock()
+				defer h.db.Unlock()
+				h.db.RemoveXREADIDWaiter(streamName, streamId, c)
+			}()
+			
+			xreadChans, _ := c.GetXREADIds()
 			// If duration = 0, block indefinitely
 			if blockDurationMillis == 0 && blocking {
-				entry := <-receiver
-				res.results = append(res.results, entry)
-				results <- res
+				xreadResult := <-xreadChans[streamName][streamId]
+				results[idx-firstStreamIndex] = xreadResult
 				return
 			}
 			// Otherwise do a select statement, blocking until timeout is reached
 			select {
 			// If timeout is reached: return nil
 			case <-time.After(time.Duration(blockDurationMillis * float64(time.Millisecond))):
-				results <- res
+				results[idx-firstStreamIndex] = nil
 				return
 
 			// Otherwise: send the relevant stream entries
-			case entry := <-receiver:
-				res.results = append(res.results, entry)
-				results <- res
+			case xreadResult := <-xreadChans[streamName][streamId]:
+				results[idx-firstStreamIndex] = xreadResult
 				return
 			}
 
@@ -1098,27 +1137,14 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 		h.db.Unlock()
 	}
 
-	ret := &resp.RESPData{Type: resp.Array}
-	for i := 0; i < numStreams; i++ {
-		waitChanRes := <-results
-		if len(waitChanRes.results) == 0 {
+	wg.Wait()
+
+	ret := &resp.RESPData{Type: resp.Array, ListRESPData: make([]*resp.RESPData, 0)}
+	for _, xreadResult := range results {
+		if xreadResult == nil {
 			continue
 		}
-		streamResults := &resp.RESPData{Type: resp.Array, ListRESPData: make([]*resp.RESPData, 2)}
-		streamResults.ListRESPData[0] = resp.ConvertBulkStringToRESP(waitChanRes.streamKey)
-		streamResultIds := &resp.RESPData{Type: resp.Array, ListRESPData: make([]*resp.RESPData, 0)}
-
-		for _, res := range waitChanRes.results {
-			streamResultIds.ListRESPData = append(streamResultIds.ListRESPData, res.RESPData())
-		}
-		streamResults.ListRESPData[1] = streamResultIds
-
-		if ret.ListRESPData == nil {
-			ret.ListRESPData = make([]*resp.RESPData, numStreams)
-		}
-
-		// Make sure to sort ret by stream names
-		ret.ListRESPData[snameToIdx[waitChanRes.streamKey]] = streamResults
+		ret.ListRESPData = append(ret.ListRESPData, xreadResult)
 	}
 
 	// If no streams had any relevant entries, return null array
@@ -1129,7 +1155,27 @@ func (h *CommandHandler) HandleXREAD(args []*resp.RESPData) (*resp.RESPData, err
 	return ret, nil
 }
 
-func (h *CommandHandler) Handle(respData *resp.RESPData, conn net.Conn, isInTransaction bool) (*resp.RESPData, error) {
+func singleXREADresult(streamKey string, streamEntries []*storage.StreamEntry) *resp.RESPData {
+	streamResults := &resp.RESPData{Type: resp.Array, ListRESPData: make([]*resp.RESPData, 2)}
+	streamResults.ListRESPData[0] = resp.ConvertBulkStringToRESP(streamKey)
+	streamResultIds := &resp.RESPData{Type: resp.Array, ListRESPData: make([]*resp.RESPData, 0)}
+
+	for _, res := range streamEntries {
+		streamResultIds.ListRESPData = append(streamResultIds.ListRESPData, res.RESPData())
+	}
+	streamResults.ListRESPData[1] = streamResultIds
+	return streamResults
+}
+
+// Handle takes in a RESP-serialized client command stored in respData,
+// along with the client (represented by its unique TCP connection conn), and a boolean argument indicating whether
+// the client is currently in transaction mode. It processes the command, using the client's connection details if needed,
+// and returns back its response in a RESPData structure on success or an error if the command was not able to be successfully handled
+// or if it is an unrecognized command.
+func (h *CommandHandler) Handle(respData *resp.RESPData, client *client.Client) (*resp.RESPData, error) {
+	if client.IsInSubscribeMode() {
+		return h.handleSubscribeMode(respData, client)
+	}
 
 	request := respData.ListRESPData
 	firstWord := strings.ToLower(string(request[0].Data))
@@ -1138,14 +1184,9 @@ func (h *CommandHandler) Handle(respData *resp.RESPData, conn net.Conn, isInTran
 	var err error
 
 	// If the command is being done under a transaction, and isn't exec, multi, or discard, simply queue it, don't execute it.
-	if isInTransaction && firstWord != "exec" && firstWord != "multi" && firstWord != "discard" {
-		h.db.Lock()
-		if _, ok := h.db.GetTransaction(conn); ok {
-			h.db.AddToTransaction(conn, respData)
-			h.db.Unlock()
-			return resp.ConvertSimpleStringToRESP("QUEUED"), nil
-		}
-		h.db.Unlock()
+	if client.IsInTransactionMode() && firstWord != "exec" && firstWord != "multi" && firstWord != "discard" {
+		client.AddToTransaction(respData)
+		return resp.ConvertSimpleStringToRESP("QUEUED"), nil
 	}
 
 	// Otherwise, proceed as normal and handle the message
@@ -1157,21 +1198,21 @@ func (h *CommandHandler) Handle(respData *resp.RESPData, conn net.Conn, isInTran
 	case "echo":
 		res, err = h.HandleECHO(request)
 	case "ping":
-		res, err = h.HandlePING(request, false)
+		res, err = h.HandlePING(request, client)
 	case "type":
 		res, err = h.HandleTYPE(request)
 
 	// Transactions
 	case "exec":
-		res, err = h.HandleEXEC(request, conn)
+		res, err = h.HandleEXEC(request, client)
 	case "multi":
-		res, err = h.HandleMULTI(request, conn)
+		res, err = h.HandleMULTI(request, client)
 	case "discard":
-		res, err = h.HandleDISCARD(request, conn)
+		res, err = h.HandleDISCARD(request, client)
 
 	// Pub-sub
 	case "subscribe":
-		res, err = h.HandleSUBSCRIBE(request, conn)
+		res, err = h.HandleSUBSCRIBE(request, client)
 	case "publish":
 		res, err = h.HandlePUBLISH(request)
 
@@ -1195,7 +1236,7 @@ func (h *CommandHandler) Handle(respData *resp.RESPData, conn net.Conn, isInTran
 	case "lpop":
 		res, err = h.HandleLPOP(request)
 	case "blpop":
-		res, err = h.HandleBLPOP(request)
+		res, err = h.HandleBLPOP(request, client)
 
 	// Stream
 	case "xadd":
@@ -1203,7 +1244,7 @@ func (h *CommandHandler) Handle(respData *resp.RESPData, conn net.Conn, isInTran
 	case "xrange":
 		res, err = h.HandleXRANGE(request)
 	case "xread":
-		res, err = h.HandleXREAD(request)
+		res, err = h.HandleXREAD(request, client)
 	default:
 		err = fmt.Errorf("ERR unknown command '%s'", firstWord)
 	}
@@ -1211,7 +1252,12 @@ func (h *CommandHandler) Handle(respData *resp.RESPData, conn net.Conn, isInTran
 	return res, err
 }
 
-func (h *CommandHandler) HandleSubscribeMode(respData *resp.RESPData, conn net.Conn) (*resp.RESPData, error) {
+// handleSubscribeMode is similar to Handle, but assumes the client is in subscribe mode, where they have access to a limited
+// number of commands. It takes in a RESP-serialized client command stored in respData, along with the client state.
+// (represented by its unique TCP connection conn), It processes the command, using the client's connection details if needed,
+// and returns back its response in a RESPData structure on success or an error if the command was not able to be successfully handled
+// or if it is an unsupported command in subscribe mode.
+func (h *CommandHandler) handleSubscribeMode(respData *resp.RESPData, client *client.Client) (*resp.RESPData, error) {
 	request := respData.ListRESPData
 	firstWord := strings.ToLower(string(request[0].Data))
 
@@ -1220,15 +1266,15 @@ func (h *CommandHandler) HandleSubscribeMode(respData *resp.RESPData, conn net.C
 
 	switch firstWord {
 	case "subscribe":
-		res, err = h.HandleSUBSCRIBE(request, conn)
+		res, err = h.HandleSUBSCRIBE(request, client)
 	case "unsubscribe":
-		res, err = h.HandleUNSUBSCRIBE(request, conn)
+		res, err = h.HandleUNSUBSCRIBE(request, client)
 	case "psubscribe":
 	case "punsubscribe":
 	case "ping":
-		res, err = h.HandlePING(request, true)
+		res, err = h.HandlePING(request, client)
 	case "quit":
-		res, err = h.HandleQUIT(request)
+		res, err = h.HandleQUIT(request, client)
 	default:
 		err = fmt.Errorf("ERR can't execute '%s': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context", firstWord)
 	}

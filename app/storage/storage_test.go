@@ -4,13 +4,14 @@ import (
 	"net"
 	"testing"
 	"time"
-	"github.com/aryand15/go-redis/resp"
+
+	"github.com/aryand15/go-redis/app/client"
 )
 
-// Helper function to create test connections
-func createTestConn() net.Conn {
+// Helper function to create test client
+func createTestClient() *client.Client {
 	c1, _ := net.Pipe()
-	return c1
+	return client.NewClient(&c1)
 }
 
 // Test NewDB
@@ -33,17 +34,10 @@ func TestNewDB(t *testing.T) {
 		t.Error("Expected streamData map to be initialized")
 	}
 
-	if db.transactions == nil {
-		t.Error("Expected transactions map to be initialized")
-	}
-
 	if db.subscribers == nil {
 		t.Error("Expected subscribers map to be initialized")
 	}
 
-	if db.publishers == nil {
-		t.Error("Expected publishers map to be initialized")
-	}
 }
 
 // Test String operations
@@ -235,71 +229,23 @@ func TestDB_StreamOperations(t *testing.T) {
 	})
 }
 
-// Test Transaction operations
-func TestDB_TransactionOperations(t *testing.T) {
-	t.Run("CreateTransaction and GetTransaction", func(t *testing.T) {
-		db := NewDB()
-		conn := createTestConn()
-		defer conn.Close()
-
-		db.CreateTransaction(conn)
-
-		trans, ok := db.GetTransaction(conn)
-		if !ok {
-			t.Fatal("Expected transaction to exist")
-		}
-
-		if len(trans) != 0 {
-			t.Error("Expected empty transaction")
-		}
-	})
-
-	t.Run("AddToTransaction", func(t *testing.T) {
-		db := NewDB()
-		conn := createTestConn()
-		defer conn.Close()
-
-		db.CreateTransaction(conn)
-		db.AddToTransaction(conn, resp.ConvertBulkStringToRESP("cmd1"))
-		db.AddToTransaction(conn, resp.ConvertBulkStringToRESP("cmd1"))
-
-		trans, _ := db.GetTransaction(conn)
-		if len(trans) != 2 {
-			t.Errorf("Expected 2 commands, got %d", len(trans))
-		}
-	})
-
-	t.Run("DeleteTransaction", func(t *testing.T) {
-		db := NewDB()
-		conn := createTestConn()
-		defer conn.Close()
-
-		db.CreateTransaction(conn)
-		db.DeleteTransaction(conn)
-
-		_, ok := db.GetTransaction(conn)
-		if ok {
-			t.Error("Expected transaction to be deleted")
-		}
-	})
-}
-
 // Test Pub/Sub operations
 func TestDB_PubSubOperations(t *testing.T) {
 	t.Run("AddSubscriber and GetSubscribers", func(t *testing.T) {
 		db := NewDB()
-		conn := createTestConn()
-		defer conn.Close()
+		c := createTestClient()
+		defer c.CloseConn()
 
-		db.AddSubscriber("channel1", conn)
+		c.SetSubscribeMode(true)
+		db.AddSubscriber(c, "channel1")
 
 		subs, ok := db.GetSubscribers("channel1")
 		if !ok {
 			t.Fatal("Expected subscribers to exist")
 		}
 
-		if !subs.Has(conn) {
-			t.Error("Expected conn to be in subscribers")
+		if !subs.Has(c) {
+			t.Error("Expected client to be in subscribers")
 		}
 
 		if subs.Length() != 1 {
@@ -307,144 +253,77 @@ func TestDB_PubSubOperations(t *testing.T) {
 		}
 	})
 
-	t.Run("RemoveSubscriberFromPublisher", func(t *testing.T) {
+	t.Run("RemoveSubscriber", func(t *testing.T) {
 		db := NewDB()
-		conn := createTestConn()
-		defer conn.Close()
+		c := createTestClient()
+		defer c.CloseConn()
 
-		db.AddSubscriber("channel1", conn)
-		db.RemoveSubscriberFromPublisher("channel1", conn)
+		c.SetSubscribeMode(true)
+		db.AddSubscriber(c, "channel1")
+		db.RemoveSubscriber(c, "channel1")
 
 		_, ok := db.GetSubscribers("channel1")
 		if ok {
 			t.Error("Expected subscribers to be removed")
 		}
 	})
-
-	t.Run("CreateReceiver and GetReceiver", func(t *testing.T) {
-		db := NewDB()
-		conn := createTestConn()
-		defer conn.Close()
-
-		db.CreateReceiver(conn)
-
-		ch, ok := db.GetReceiver(conn)
-		if !ok {
-			t.Fatal("Expected receiver to exist")
-		}
-
-		if ch == nil {
-			t.Error("Expected channel to be initialized")
-		}
-	})
-
-	t.Run("AddPublisher and GetPublishers", func(t *testing.T) {
-		db := NewDB()
-		conn := createTestConn()
-		defer conn.Close()
-
-		db.AddPublisher(conn, "channel1")
-		db.AddPublisher(conn, "channel2")
-
-		pubs, ok := db.GetPublishers(conn)
-		if !ok {
-			t.Fatal("Expected publishers to exist")
-		}
-
-		if pubs.Length() != 2 {
-			t.Errorf("Expected 2 publishers, got %d", pubs.Length())
-		}
-	})
-
-	t.Run("RemovePublisherFromSubscriber", func(t *testing.T) {
-		db := NewDB()
-		conn := createTestConn()
-		defer conn.Close()
-
-		db.AddPublisher(conn, "channel1")
-		db.AddPublisher(conn, "channel2")
-		db.RemovePublisherFromSubscriber(conn, "channel1")
-
-		pubs, _ := db.GetPublishers(conn)
-		if pubs.Length() != 1 {
-			t.Errorf("Expected 1 publisher remaining, got %d", pubs.Length())
-		}
-	})
-
-	t.Run("DeleteSubscriber", func(t *testing.T) {
-		db := NewDB()
-		conn := createTestConn()
-		defer conn.Close()
-
-		db.AddPublisher(conn, "channel1")
-		db.CreateReceiver(conn)
-		db.DeleteSubscriber(conn)
-
-		_, ok1 := db.GetPublishers(conn)
-		_, ok2 := db.GetReceiver(conn)
-
-		if ok1 || ok2 {
-			t.Error("Expected subscriber to be fully deleted")
-		}
-	})
 }
 
 // Test BLPOP waiter operations
 func TestDB_BLPOPWaiters(t *testing.T) {
-	t.Run("AddBLPOPWaiter and GetBLPOPWaiters", func(t *testing.T) {
+	t.Run("AddBLPOPWaiter and GetNextBLPOPWaiter", func(t *testing.T) {
 		db := NewDB()
+		c := createTestClient()
+		defer c.CloseConn()
 
-		ch := db.AddBLPOPWaiter("key1")
+		db.AddBLPOPWaiter("key1", c)
 
-		if ch == nil {
-			t.Fatal("Expected channel to be returned")
-		}
-
-		waiters, ok := db.GetBLPOPWaiters("key1")
+		waiter, ok := db.GetNextBLPOPWaiter("key1")
 		if !ok {
 			t.Fatal("Expected waiters to exist")
 		}
-
-		if len(waiters) != 1 {
-			t.Errorf("Expected 1 waiter, got %d", len(waiters))
+		if waiter != c {
+			t.Error("Expected to get the same client back")
 		}
 	})
 
 	t.Run("PopBLPOPWaiter", func(t *testing.T) {
 		db := NewDB()
+		c1 := createTestClient()
+		c2 := createTestClient()
+		defer c1.CloseConn()
+		defer c2.CloseConn()
 
-		db.AddBLPOPWaiter("key1")
-		db.AddBLPOPWaiter("key1")
-		db.PopBLPOPWaiter("key1")
+		db.AddBLPOPWaiter("key1", c1)
+		db.AddBLPOPWaiter("key1", c2)
+		db.PopBLPOPWaiter("key1", c1)
 
-		waiters, _ := db.GetBLPOPWaiters("key1")
-		if len(waiters) != 1 {
-			t.Errorf("Expected 1 waiter remaining, got %d", len(waiters))
+		waiter, ok := db.GetNextBLPOPWaiter("key1")
+		if !ok {
+			t.Fatal("Expected waiter to exist")
+		}
+		if waiter != c2 {
+			t.Error("Expected c2 to be next waiter after popping c1")
 		}
 	})
 
 	t.Run("RemoveBLPOPWaiter", func(t *testing.T) {
 		db := NewDB()
+		c1 := createTestClient()
+		c2 := createTestClient()
+		defer c1.CloseConn()
+		defer c2.CloseConn()
 
-		db.AddBLPOPWaiter("key1")
-		db.AddBLPOPWaiter("key1")
-		db.RemoveBLPOPWaiter("key1", 0)
+		db.AddBLPOPWaiter("key1", c1)
+		db.AddBLPOPWaiter("key1", c2)
+		db.RemoveBLPOPWaiter("key1", c1)
 
-		waiters, _ := db.GetBLPOPWaiters("key1")
-		if len(waiters) != 1 {
-			t.Errorf("Expected 1 waiter remaining, got %d", len(waiters))
+		waiter, ok := db.GetNextBLPOPWaiter("key1")
+		if !ok {
+			t.Fatal("Expected waiter to exist")
 		}
-	})
-
-	t.Run("RemoveBLPOPWaiter removes key when empty", func(t *testing.T) {
-		db := NewDB()
-
-		db.AddBLPOPWaiter("key1")
-		db.RemoveBLPOPWaiter("key1", 0)
-
-		_, ok := db.GetBLPOPWaiters("key1")
-		if ok {
-			t.Error("Expected waiters to be removed when empty")
+		if waiter != c2 {
+			t.Error("Expected c2 to be next waiter after removing c1")
 		}
 	})
 }
@@ -453,9 +332,10 @@ func TestDB_BLPOPWaiters(t *testing.T) {
 func TestDB_XREADWaiters(t *testing.T) {
 	t.Run("AddXREADIDWaiter and GetXREADIDWaiters", func(t *testing.T) {
 		db := NewDB()
-		ch := make(chan *StreamEntry)
+		c := createTestClient()
+		defer c.CloseConn()
 
-		db.AddXREADIDWaiter("stream1", "1-0", ch)
+		db.AddXREADIDWaiter("stream1", "1-0", c)
 
 		waiters, ok := db.GetXREADIDWaiters("stream1")
 		if !ok {
@@ -463,116 +343,71 @@ func TestDB_XREADWaiters(t *testing.T) {
 		}
 
 		idWaiters := waiters["1-0"]
-		if len(idWaiters) != 1 {
-			t.Errorf("Expected 1 waiter for ID, got %d", len(idWaiters))
+		if idWaiters.Length() != 1 {
+			t.Errorf("Expected 1 waiter for ID, got %d", idWaiters.Length())
 		}
 	})
 
 	t.Run("RemoveXREADIDWaiter", func(t *testing.T) {
 		db := NewDB()
-		ch := make(chan *StreamEntry)
+		c := createTestClient()
+		defer c.CloseConn()
 
-		db.AddXREADIDWaiter("stream1", "1-0", ch)
-		db.RemoveXREADIDWaiter("stream1", "1-0", 0)
+		db.AddXREADIDWaiter("stream1", "1-0", c)
+		db.RemoveXREADIDWaiter("stream1", "1-0", c)
 
-		waiters, _ := db.GetXREADIDWaiters("stream1")
-		idWaiters := waiters["1-0"]
-		if len(idWaiters) != 0 {
-			t.Errorf("Expected 0 waiters, got %d", len(idWaiters))
+		waiters, ok := db.GetXREADIDWaiters("stream1")
+		if !ok {
+			// Stream info may still exist but with no waiters for this ID
+			return
+		}
+		idWaiters, exists := waiters["1-0"]
+		if exists && idWaiters.Length() != 0 {
+			t.Errorf("Expected 0 waiters, got %d", idWaiters.Length())
 		}
 	})
 
 	t.Run("AddXREADAllWaiter and GetXREADAllWaiters", func(t *testing.T) {
 		db := NewDB()
-		ch := make(chan *StreamEntry)
+		c := createTestClient()
+		defer c.CloseConn()
 
-		db.AddXREADAllWaiter("stream1", ch)
+		// First create a stream so GetXREADAllWaiters doesn't error
+		stream := NewStream()
+		stream.AddEntry(NewStreamEntry("0-1"))
+		db.SetStream("stream1", stream)
 
-		waiters, ok := db.GetXREADAllWaiters("stream1")
-		if !ok {
-			t.Fatal("Expected waiters to exist")
+		db.AddXREADAllWaiter("stream1", c)
+
+		waiters, err := db.GetXREADAllWaiters("stream1")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
 
-		if len(waiters) != 1 {
-			t.Errorf("Expected 1 waiter, got %d", len(waiters))
+		if waiters.Length() != 1 {
+			t.Errorf("Expected 1 waiter, got %d", waiters.Length())
 		}
 	})
 
 	t.Run("RemoveXREADAllWaiter", func(t *testing.T) {
 		db := NewDB()
-		ch := make(chan *StreamEntry)
+		c := createTestClient()
+		defer c.CloseConn()
 
-		db.AddXREADAllWaiter("stream1", ch)
-		db.RemoveXREADAllWaiter("stream1", 0)
+		// First create a stream
+		stream := NewStream()
+		stream.AddEntry(NewStreamEntry("0-1"))
+		db.SetStream("stream1", stream)
 
-		waiters, _ := db.GetXREADAllWaiters("stream1")
-		if len(waiters) != 0 {
-			t.Errorf("Expected 0 waiters, got %d", len(waiters))
+		db.AddXREADAllWaiter("stream1", c)
+		db.RemoveXREADAllWaiter("stream1", c)
+
+		waiters, err := db.GetXREADAllWaiters("stream1")
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
 		}
-	})
-}
-
-// Test Set operations
-func TestSet(t *testing.T) {
-	t.Run("NewSet creates empty set", func(t *testing.T) {
-		s := NewSet[string]()
-
-		if s.Length() != 0 {
-			t.Error("Expected empty set")
-		}
-	})
-
-	t.Run("Add and Has", func(t *testing.T) {
-		s := NewSet[string]()
-		s.Add("item1")
-
-		if !s.Has("item1") {
-			t.Error("Expected set to contain item1")
-		}
-
-		if s.Length() != 1 {
-			t.Errorf("Expected length 1, got %d", s.Length())
-		}
-	})
-
-	t.Run("Add duplicate doesn't increase length", func(t *testing.T) {
-		s := NewSet[string]()
-		s.Add("item1")
-		s.Add("item1")
-
-		if s.Length() != 1 {
-			t.Errorf("Expected length 1, got %d", s.Length())
-		}
-	})
-
-	t.Run("Remove", func(t *testing.T) {
-		s := NewSet[string]()
-		s.Add("item1")
-		s.Remove("item1")
-
-		if s.Has("item1") {
-			t.Error("Expected item1 to be removed")
-		}
-
-		if s.Length() != 0 {
-			t.Errorf("Expected length 0, got %d", s.Length())
-		}
-	})
-
-	t.Run("Items returns map", func(t *testing.T) {
-		s := NewSet[string]()
-		s.Add("a")
-		s.Add("b")
-
-		items := s.Items()
-		if len(items) != 2 {
-			t.Errorf("Expected 2 items, got %d", len(items))
-		}
-
-		_, ok1 := items["a"]
-		_, ok2 := items["b"]
-		if !ok1 || !ok2 {
-			t.Error("Expected both items in map")
+		if waiters.Length() != 0 {
+			t.Errorf("Expected 0 waiters, got %d", waiters.Length())
 		}
 	})
 }

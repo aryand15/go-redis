@@ -2,13 +2,15 @@ package server
 
 import (
 	"bytes"
-	"github.com/aryand15/go-redis/app/commands"
-	"github.com/aryand15/go-redis/app/storage"
-	"github.com/aryand15/go-redis/resp"
 	"net"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aryand15/go-redis/app/client"
+	"github.com/aryand15/go-redis/app/commands"
+	"github.com/aryand15/go-redis/app/storage"
+	"github.com/aryand15/go-redis/resp"
 )
 
 // Helper function to create a test command handler
@@ -38,18 +40,24 @@ func readResponse(conn net.Conn) (*resp.RESPData, error) {
 	return respData, nil
 }
 
+// Helper function to create a test client from a connection
+func createTestClientFromConn(conn net.Conn) *client.Client {
+	return client.NewClient(&conn)
+}
+
 // Test basic connection handling
 func TestHandleConn_BasicCommands(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
 
-	go handleConn(server, handler)
+	c := createTestClientFromConn(serverConn)
+	go handleConn(c, handler)
 
 	// Test PING command
-	client.Write(encodeCommand("PING"))
-	response, err := readResponse(client)
+	clientConn.Write(encodeCommand("PING"))
+	response, err := readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading PING response: %v", err)
 	}
@@ -58,8 +66,8 @@ func TestHandleConn_BasicCommands(t *testing.T) {
 	}
 
 	// Test ECHO command
-	client.Write(encodeCommand("ECHO", "hello"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("ECHO", "hello"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading ECHO response: %v", err)
 	}
@@ -68,8 +76,8 @@ func TestHandleConn_BasicCommands(t *testing.T) {
 	}
 
 	// Test SET and GET commands
-	client.Write(encodeCommand("SET", "key1", "value1"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("SET", "key1", "value1"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading SET response: %v", err)
 	}
@@ -77,8 +85,8 @@ func TestHandleConn_BasicCommands(t *testing.T) {
 		t.Errorf("Expected OK, got %v", response.String())
 	}
 
-	client.Write(encodeCommand("GET", "key1"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("GET", "key1"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading GET response: %v", err)
 	}
@@ -90,15 +98,16 @@ func TestHandleConn_BasicCommands(t *testing.T) {
 // Test transaction mode
 func TestHandleConn_TransactionMode(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
 
-	go handleConn(server, handler)
+	c := createTestClientFromConn(serverConn)
+	go handleConn(c, handler)
 
 	// Start transaction
-	client.Write(encodeCommand("MULTI"))
-	response, err := readResponse(client)
+	clientConn.Write(encodeCommand("MULTI"))
+	response, err := readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading MULTI response: %v", err)
 	}
@@ -107,8 +116,8 @@ func TestHandleConn_TransactionMode(t *testing.T) {
 	}
 
 	// Queue commands
-	client.Write(encodeCommand("SET", "tx1", "val1"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("SET", "tx1", "val1"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading queued SET response: %v", err)
 	}
@@ -116,8 +125,8 @@ func TestHandleConn_TransactionMode(t *testing.T) {
 		t.Errorf("Expected QUEUED, got %v", response.String())
 	}
 
-	client.Write(encodeCommand("SET", "tx2", "val2"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("SET", "tx2", "val2"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading second queued SET response: %v", err)
 	}
@@ -126,8 +135,8 @@ func TestHandleConn_TransactionMode(t *testing.T) {
 	}
 
 	// Execute transaction
-	client.Write(encodeCommand("EXEC"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("EXEC"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading EXEC response: %v", err)
 	}
@@ -136,8 +145,8 @@ func TestHandleConn_TransactionMode(t *testing.T) {
 	}
 
 	// Verify commands were executed
-	client.Write(encodeCommand("GET", "tx1"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("GET", "tx1"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading GET response: %v", err)
 	}
@@ -149,26 +158,27 @@ func TestHandleConn_TransactionMode(t *testing.T) {
 // Test DISCARD in transaction mode
 func TestHandleConn_TransactionDiscard(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
 
-	go handleConn(server, handler)
+	c := createTestClientFromConn(serverConn)
+	go handleConn(c, handler)
 
 	// Start transaction
-	client.Write(encodeCommand("MULTI"))
-	readResponse(client) // Consume MULTI response
+	clientConn.Write(encodeCommand("MULTI"))
+	readResponse(clientConn) // Consume MULTI response
 
 	// Queue commands
-	client.Write(encodeCommand("SET", "discard1", "val1"))
-	readResponse(client) // Consume QUEUED response
+	clientConn.Write(encodeCommand("SET", "discard1", "val1"))
+	readResponse(clientConn) // Consume QUEUED response
 
-	client.Write(encodeCommand("SET", "discard2", "val2"))
-	readResponse(client) // Consume QUEUED response
+	clientConn.Write(encodeCommand("SET", "discard2", "val2"))
+	readResponse(clientConn) // Consume QUEUED response
 
 	// Discard transaction
-	client.Write(encodeCommand("DISCARD"))
-	response, err := readResponse(client)
+	clientConn.Write(encodeCommand("DISCARD"))
+	response, err := readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading DISCARD response: %v", err)
 	}
@@ -177,8 +187,8 @@ func TestHandleConn_TransactionDiscard(t *testing.T) {
 	}
 
 	// Verify commands were not executed
-	client.Write(encodeCommand("GET", "discard1"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("GET", "discard1"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading GET response: %v", err)
 	}
@@ -190,15 +200,16 @@ func TestHandleConn_TransactionDiscard(t *testing.T) {
 // Test subscribe mode
 func TestHandleConn_SubscribeMode(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
 
-	go handleConn(server, handler)
+	c := createTestClientFromConn(serverConn)
+	go handleConn(c, handler)
 
 	// Subscribe to a channel
-	client.Write(encodeCommand("SUBSCRIBE", "channel1"))
-	response, err := readResponse(client)
+	clientConn.Write(encodeCommand("SUBSCRIBE", "channel1"))
+	response, err := readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading SUBSCRIBE response: %v", err)
 	}
@@ -213,39 +224,32 @@ func TestHandleConn_SubscribeMode(t *testing.T) {
 	if response.ListRESPData[1].String() != "channel1" {
 		t.Errorf("Expected 'channel1', got %v", response.ListRESPData[1].String())
 	}
-
-	// Verify the subscriber was registered in the database
-	handler.GetDB().Lock()
-	_, hasReceiver := handler.GetDB().GetReceiver(server)
-	handler.GetDB().Unlock()
-	if !hasReceiver {
-		t.Error("Expected subscriber to be registered")
-	}
 }
 
 // Test UNSUBSCRIBE in subscribe mode
 func TestHandleConn_UnsubscribeMode(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
-	
-	go handleConn(server, handler)
-	
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	c := createTestClientFromConn(serverConn)
+	go handleConn(c, handler)
+
 	// Subscribe to two channels
-	client.Write(encodeCommand("SUBSCRIBE", "ch1"))
-	readResponse(client) // Consume first subscribe response
-	
-	client.Write(encodeCommand("SUBSCRIBE", "ch2"))
-	readResponse(client) // Consume second subscribe response
-	
+	clientConn.Write(encodeCommand("SUBSCRIBE", "ch1"))
+	readResponse(clientConn) // Consume first subscribe response
+
+	clientConn.Write(encodeCommand("SUBSCRIBE", "ch2"))
+	readResponse(clientConn) // Consume second subscribe response
+
 	// Now we're in subscribe mode, try to unsubscribe from one channel
-	client.Write(encodeCommand("UNSUBSCRIBE", "ch1"))
-	response, err := readResponse(client)
+	clientConn.Write(encodeCommand("UNSUBSCRIBE", "ch1"))
+	response, err := readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading UNSUBSCRIBE response: %v", err)
 	}
-	
+
 	// Response should be an array: ["unsubscribe", "ch1", <remaining count>]
 	if response.Type != resp.Array {
 		t.Fatalf("Expected Array response type, got %v", response.Type)
@@ -264,19 +268,20 @@ func TestHandleConn_UnsubscribeMode(t *testing.T) {
 // Test QUIT command in subscribe mode
 func TestHandleConn_QuitInSubscribeMode(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
 
-	go handleConn(server, handler)
+	c := createTestClientFromConn(serverConn)
+	go handleConn(c, handler)
 
 	// Subscribe to a channel
-	client.Write(encodeCommand("SUBSCRIBE", "channel1"))
-	readResponse(client) // Consume subscribe response
+	clientConn.Write(encodeCommand("SUBSCRIBE", "channel1"))
+	readResponse(clientConn) // Consume subscribe response
 
 	// Send QUIT to exit subscribe mode
-	client.Write(encodeCommand("QUIT"))
-	response, err := readResponse(client)
+	clientConn.Write(encodeCommand("QUIT"))
+	response, err := readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading QUIT response: %v", err)
 	}
@@ -288,8 +293,8 @@ func TestHandleConn_QuitInSubscribeMode(t *testing.T) {
 	}
 
 	// After quitting subscribe mode, should be able to run normal commands
-	client.Write(encodeCommand("PING"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("PING"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading PING after QUIT: %v", err)
 	}
@@ -301,19 +306,20 @@ func TestHandleConn_QuitInSubscribeMode(t *testing.T) {
 // Test error handling for invalid RESP
 func TestHandleConn_InvalidRESP(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
 
+	c := createTestClientFromConn(serverConn)
 	done := make(chan bool)
 	go func() {
-		handleConn(server, handler)
+		handleConn(c, handler)
 		done <- true
 	}()
 
 	// Send invalid RESP (not an array)
 	invalidResp := resp.ConvertSimpleStringToRESP("NOT_AN_ARRAY")
 	encoded, _ := invalidResp.EncodeToRESP()
-	client.Write(encoded)
+	clientConn.Write(encoded)
 
 	// The server should close the connection
 	select {
@@ -327,19 +333,20 @@ func TestHandleConn_InvalidRESP(t *testing.T) {
 // Test error handling for empty array
 func TestHandleConn_EmptyArray(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
 
+	c := createTestClientFromConn(serverConn)
 	done := make(chan bool)
 	go func() {
-		handleConn(server, handler)
+		handleConn(c, handler)
 		done <- true
 	}()
 
 	// Send empty array
 	emptyArray := &resp.RESPData{Type: resp.Array, ListRESPData: []*resp.RESPData{}}
 	encoded, _ := emptyArray.EncodeToRESP()
-	client.Write(encoded)
+	clientConn.Write(encoded)
 
 	// The server should close the connection
 	select {
@@ -350,69 +357,27 @@ func TestHandleConn_EmptyArray(t *testing.T) {
 	}
 }
 
-// Test cleanup on disconnect
-func TestHandleConn_Cleanup(t *testing.T) {
-	handler := setupTestHandler()
-	client, server := net.Pipe()
-
-	go handleConn(server, handler)
-
-	// Subscribe to channels
-	client.Write(encodeCommand("SUBSCRIBE", "cleanup_channel"))
-	readResponse(client) // Consume subscribe response
-
-	// Verify subscriber was added
-	handler.GetDB().Lock()
-	_, hasReceiver := handler.GetDB().GetReceiver(server)
-	if !hasReceiver {
-		handler.GetDB().Unlock()
-		t.Fatal("Expected receiver to be registered")
-	}
-	handler.GetDB().Unlock()
-
-	// Close the client connection
-	client.Close()
-
-	// Give the cleanup defer a moment to run
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify cleanup happened
-	handler.GetDB().Lock()
-	_, hasReceiver = handler.GetDB().GetReceiver(server)
-	if hasReceiver {
-		handler.GetDB().Unlock()
-		t.Error("Expected receiver to be cleaned up after disconnect")
-	}
-
-	// Verify subscriber was removed from publishers
-	if pubs, ok := handler.GetDB().GetPublishers(server); ok {
-		handler.GetDB().Unlock()
-		t.Errorf("Expected publishers to be cleaned up, found %d", pubs.Length())
-	} else {
-		handler.GetDB().Unlock()
-	}
-}
-
 // Test concurrent connections
 func TestHandleConn_ConcurrentConnections(t *testing.T) {
 	handler := setupTestHandler()
 
 	// Create multiple concurrent connections
 	numClients := 5
-	clients := make([]net.Conn, numClients)
-	servers := make([]net.Conn, numClients)
+	clientConns := make([]net.Conn, numClients)
+	serverConns := make([]net.Conn, numClients)
 
 	for i := 0; i < numClients; i++ {
-		client, server := net.Pipe()
-		clients[i] = client
-		servers[i] = server
-		go handleConn(server, handler)
+		clientConn, serverConn := net.Pipe()
+		clientConns[i] = clientConn
+		serverConns[i] = serverConn
+		c := createTestClientFromConn(serverConn)
+		go handleConn(c, handler)
 	}
 
 	defer func() {
 		for i := 0; i < numClients; i++ {
-			clients[i].Close()
-			servers[i].Close()
+			clientConns[i].Close()
+			serverConns[i].Close()
 		}
 	}()
 
@@ -420,12 +385,12 @@ func TestHandleConn_ConcurrentConnections(t *testing.T) {
 	for i := 0; i < numClients; i++ {
 		key := "concurrent_key_" + string(rune('0'+i))
 		value := "value_" + string(rune('0'+i))
-		clients[i].Write(encodeCommand("SET", key, value))
+		clientConns[i].Write(encodeCommand("SET", key, value))
 	}
 
 	// Read responses
 	for i := 0; i < numClients; i++ {
-		response, err := readResponse(clients[i])
+		response, err := readResponse(clientConns[i])
 		if err != nil {
 			t.Fatalf("Client %d error: %v", i, err)
 		}
@@ -439,8 +404,8 @@ func TestHandleConn_ConcurrentConnections(t *testing.T) {
 		key := "concurrent_key_" + string(rune('0'+i))
 		expectedValue := "value_" + string(rune('0'+i))
 
-		clients[i].Write(encodeCommand("GET", key))
-		response, err := readResponse(clients[i])
+		clientConns[i].Write(encodeCommand("GET", key))
+		response, err := readResponse(clientConns[i])
 		if err != nil {
 			t.Fatalf("Client %d GET error: %v", i, err)
 		}
@@ -453,15 +418,16 @@ func TestHandleConn_ConcurrentConnections(t *testing.T) {
 // Test error responses
 func TestHandleConn_ErrorResponses(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
 
-	go handleConn(server, handler)
+	c := createTestClientFromConn(serverConn)
+	go handleConn(c, handler)
 
 	// Test unknown command
-	client.Write(encodeCommand("UNKNOWN", "arg1"))
-	response, err := readResponse(client)
+	clientConn.Write(encodeCommand("UNKNOWN", "arg1"))
+	response, err := readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading response: %v", err)
 	}
@@ -473,8 +439,8 @@ func TestHandleConn_ErrorResponses(t *testing.T) {
 	}
 
 	// Test wrong number of arguments
-	client.Write(encodeCommand("SET", "key1"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("SET", "key1"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error reading response: %v", err)
 	}
@@ -486,15 +452,16 @@ func TestHandleConn_ErrorResponses(t *testing.T) {
 // Test switching between modes
 func TestHandleConn_ModeSwitching(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
 
-	go handleConn(server, handler)
+	c := createTestClientFromConn(serverConn)
+	go handleConn(c, handler)
 
 	// Normal mode - SET command
-	client.Write(encodeCommand("SET", "k1", "v1"))
-	response, err := readResponse(client)
+	clientConn.Write(encodeCommand("SET", "k1", "v1"))
+	response, err := readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error in normal mode: %v", err)
 	}
@@ -503,11 +470,11 @@ func TestHandleConn_ModeSwitching(t *testing.T) {
 	}
 
 	// Enter transaction mode
-	client.Write(encodeCommand("MULTI"))
-	readResponse(client)
+	clientConn.Write(encodeCommand("MULTI"))
+	readResponse(clientConn)
 
-	client.Write(encodeCommand("SET", "k2", "v2"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("SET", "k2", "v2"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error in transaction mode: %v", err)
 	}
@@ -516,12 +483,12 @@ func TestHandleConn_ModeSwitching(t *testing.T) {
 	}
 
 	// Exit transaction mode with DISCARD
-	client.Write(encodeCommand("DISCARD"))
-	readResponse(client)
+	clientConn.Write(encodeCommand("DISCARD"))
+	readResponse(clientConn)
 
 	// Back to normal mode
-	client.Write(encodeCommand("GET", "k1"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("GET", "k1"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error after exiting transaction: %v", err)
 	}
@@ -530,16 +497,16 @@ func TestHandleConn_ModeSwitching(t *testing.T) {
 	}
 
 	// Enter subscribe mode
-	client.Write(encodeCommand("SUBSCRIBE", "ch1"))
-	readResponse(client)
+	clientConn.Write(encodeCommand("SUBSCRIBE", "ch1"))
+	readResponse(clientConn)
 
 	// Exit subscribe mode with QUIT
-	client.Write(encodeCommand("QUIT"))
-	readResponse(client)
+	clientConn.Write(encodeCommand("QUIT"))
+	readResponse(clientConn)
 
 	// Back to normal mode again
-	client.Write(encodeCommand("PING"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("PING"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error after exiting subscribe mode: %v", err)
 	}
@@ -551,20 +518,21 @@ func TestHandleConn_ModeSwitching(t *testing.T) {
 // Test connection read timeout/closure
 func TestHandleConn_ConnectionClosure(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
+	clientConn, serverConn := net.Pipe()
 
+	c := createTestClientFromConn(serverConn)
 	done := make(chan bool)
 	go func() {
-		handleConn(server, handler)
+		handleConn(c, handler)
 		done <- true
 	}()
 
 	// Send a command
-	client.Write(encodeCommand("PING"))
-	readResponse(client)
+	clientConn.Write(encodeCommand("PING"))
+	readResponse(clientConn)
 
 	// Close client connection
-	client.Close()
+	clientConn.Close()
 
 	// Wait for handleConn to finish
 	select {
@@ -578,11 +546,12 @@ func TestHandleConn_ConnectionClosure(t *testing.T) {
 // Test multiple sequential commands
 func TestHandleConn_SequentialCommands(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
 
-	go handleConn(server, handler)
+	c := createTestClientFromConn(serverConn)
+	go handleConn(c, handler)
 
 	commands := []struct {
 		cmd      []string
@@ -598,8 +567,8 @@ func TestHandleConn_SequentialCommands(t *testing.T) {
 	}
 
 	for i, tc := range commands {
-		client.Write(encodeCommand(tc.cmd...))
-		response, err := readResponse(client)
+		clientConn.Write(encodeCommand(tc.cmd...))
+		response, err := readResponse(clientConn)
 		if err != nil {
 			t.Fatalf("Command %d error: %v", i, err)
 		}
@@ -615,17 +584,18 @@ func TestHandleConn_SequentialCommands(t *testing.T) {
 // Test buffer handling with moderately sized data
 func TestHandleConn_ModerateData(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
 
-	go handleConn(server, handler)
+	c := createTestClientFromConn(serverConn)
+	go handleConn(c, handler)
 
 	// Create a moderate value (avoid hitting buffer limits)
 	moderateValue := strings.Repeat("a", 512)
 
-	client.Write(encodeCommand("SET", "moderate_key", moderateValue))
-	response, err := readResponse(client)
+	clientConn.Write(encodeCommand("SET", "moderate_key", moderateValue))
+	response, err := readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error with moderate SET: %v", err)
 	}
@@ -633,8 +603,8 @@ func TestHandleConn_ModerateData(t *testing.T) {
 		t.Errorf("Expected OK, got %v", response.String())
 	}
 
-	client.Write(encodeCommand("GET", "moderate_key"))
-	response, err = readResponse(client)
+	clientConn.Write(encodeCommand("GET", "moderate_key"))
+	response, err = readResponse(clientConn)
 	if err != nil {
 		t.Fatalf("Error with moderate GET: %v", err)
 	}
@@ -646,17 +616,18 @@ func TestHandleConn_ModerateData(t *testing.T) {
 // Test malformed commands in different modes
 func TestHandleConn_MalformedCommands(t *testing.T) {
 	handler := setupTestHandler()
-	client, server := net.Pipe()
-	defer client.Close()
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
 
+	c := createTestClientFromConn(serverConn)
 	done := make(chan bool)
 	go func() {
-		handleConn(server, handler)
+		handleConn(c, handler)
 		done <- true
 	}()
 
 	// Send malformed data (not valid RESP)
-	client.Write([]byte("this is not RESP\r\n"))
+	clientConn.Write([]byte("this is not RESP\r\n"))
 
 	// Connection should be closed
 	select {

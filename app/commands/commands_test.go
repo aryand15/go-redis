@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aryand15/go-redis/app/client"
 	"github.com/aryand15/go-redis/app/storage"
 	"github.com/aryand15/go-redis/resp"
 )
@@ -13,6 +14,12 @@ import (
 // helpers
 func setupTestHandler() *CommandHandler {
 	return NewCommandHandler(storage.NewDB())
+}
+
+// createTestClient creates a test client using net.Pipe
+func createTestClient() *client.Client {
+	c1, _ := net.Pipe()
+	return client.NewClient(&c1)
 }
 
 func cmd(args ...string) *resp.RESPData {
@@ -27,7 +34,10 @@ func cmd(args ...string) *resp.RESPData {
 func TestHandlePING(t *testing.T) {
 	t.Run("PING returns PONG", func(t *testing.T) {
 		h := setupTestHandler()
-		r, err := h.Handle(cmd("PING"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		r, err := h.Handle(cmd("PING"), c)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -51,7 +61,10 @@ func TestHandleECHO(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			h := setupTestHandler()
-			r, err := h.Handle(cmd(c.args...), nil, false)
+			client := createTestClient()
+			defer client.CloseConn()
+
+			r, err := h.Handle(cmd(c.args...), client)
 			if c.wantErr {
 				if err == nil {
 					t.Fatalf("expected error")
@@ -72,12 +85,15 @@ func TestHandleECHO(t *testing.T) {
 func TestHandleSET_GET(t *testing.T) {
 	t.Run("basic set-get", func(t *testing.T) {
 		h := setupTestHandler()
+		c := createTestClient()
+		defer c.CloseConn()
+
 		// SET k v
-		if _, err := h.Handle(cmd("SET", "k", "v"), nil, false); err != nil {
+		if _, err := h.Handle(cmd("SET", "k", "v"), c); err != nil {
 			t.Fatalf("SET error: %v", err)
 		}
 		// GET k
-		r, err := h.Handle(cmd("GET", "k"), nil, false)
+		r, err := h.Handle(cmd("GET", "k"), c)
 		if err != nil {
 			t.Fatalf("GET error: %v", err)
 		}
@@ -88,17 +104,20 @@ func TestHandleSET_GET(t *testing.T) {
 
 	t.Run("EX expiry works", func(t *testing.T) {
 		h := setupTestHandler()
-		if _, err := h.Handle(cmd("SET", "k2", "v2", "EX", "1"), nil, false); err != nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		if _, err := h.Handle(cmd("SET", "k2", "v2", "EX", "1"), c); err != nil {
 			t.Fatalf("SET EX error: %v", err)
 		}
 		// Immediately present
-		r, _ := h.Handle(cmd("GET", "k2"), nil, false)
+		r, _ := h.Handle(cmd("GET", "k2"), c)
 		if r.Type != resp.BulkString || string(r.Data) != "v2" {
 			t.Fatalf("expected v2 present, got %#v", r)
 		}
 		// wait >1s and ensure gone
 		time.Sleep(1200 * time.Millisecond)
-		r2, _ := h.Handle(cmd("GET", "k2"), nil, false)
+		r2, _ := h.Handle(cmd("GET", "k2"), c)
 		if r2.Type != resp.BulkString || len(r2.Data) != 0 {
 			t.Fatalf("expected nil bulk after expiry, got %#v", r2)
 		}
@@ -106,11 +125,14 @@ func TestHandleSET_GET(t *testing.T) {
 
 	t.Run("wrong type error", func(t *testing.T) {
 		h := setupTestHandler()
+		c := createTestClient()
+		defer c.CloseConn()
+
 		// make a list at key
-		if _, err := h.Handle(cmd("RPUSH", "L", "a"), nil, false); err != nil {
+		if _, err := h.Handle(cmd("RPUSH", "L", "a"), c); err != nil {
 			t.Fatalf("RPUSH error: %v", err)
 		}
-		if _, err := h.Handle(cmd("SET", "L", "x"), nil, false); err == nil {
+		if _, err := h.Handle(cmd("SET", "L", "x"), c); err == nil {
 			t.Fatalf("expected error when setting key with list type")
 		}
 	})
@@ -120,8 +142,11 @@ func TestHandleSET_GET(t *testing.T) {
 func TestHandleINCR(t *testing.T) {
 	t.Run("concurrent incr", func(t *testing.T) {
 		h := setupTestHandler()
+		c := createTestClient()
+		defer c.CloseConn()
+
 		// ensure starts at 0
-		if _, err := h.Handle(cmd("SET", "num", "0"), nil, false); err != nil {
+		if _, err := h.Handle(cmd("SET", "num", "0"), c); err != nil {
 			t.Fatalf("SET error: %v", err)
 		}
 		var wg sync.WaitGroup
@@ -130,13 +155,15 @@ func TestHandleINCR(t *testing.T) {
 		for i := 0; i < goroutines; i++ {
 			go func() {
 				defer wg.Done()
-				if _, err := h.Handle(cmd("INCR", "num"), nil, false); err != nil {
+				testClient := createTestClient()
+				defer testClient.CloseConn()
+				if _, err := h.Handle(cmd("INCR", "num"), testClient); err != nil {
 					t.Errorf("INCR error: %v", err)
 				}
 			}()
 		}
 		wg.Wait()
-		r, err := h.Handle(cmd("GET", "num"), nil, false)
+		r, err := h.Handle(cmd("GET", "num"), c)
 		if err != nil {
 			t.Fatalf("GET error: %v", err)
 		}
@@ -147,10 +174,13 @@ func TestHandleINCR(t *testing.T) {
 
 	t.Run("incr non-int error", func(t *testing.T) {
 		h := setupTestHandler()
-		if _, err := h.Handle(cmd("SET", "bad", "notint"), nil, false); err != nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		if _, err := h.Handle(cmd("SET", "bad", "notint"), c); err != nil {
 			t.Fatalf("SET error: %v", err)
 		}
-		if _, err := h.Handle(cmd("INCR", "bad"), nil, false); err == nil {
+		if _, err := h.Handle(cmd("INCR", "bad"), c); err == nil {
 			t.Fatalf("expected error when incr non-int")
 		}
 	})
@@ -160,10 +190,13 @@ func TestHandleINCR(t *testing.T) {
 func TestListCommandsAndBLPOP(t *testing.T) {
 	t.Run("rpush lpop llen lrange", func(t *testing.T) {
 		h := setupTestHandler()
-		if _, err := h.Handle(cmd("RPUSH", "arr", "a", "b", "c"), nil, false); err != nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		if _, err := h.Handle(cmd("RPUSH", "arr", "a", "b", "c"), c); err != nil {
 			t.Fatalf("RPUSH error: %v", err)
 		}
-		rlen, _ := h.Handle(cmd("LLEN", "arr"), nil, false)
+		rlen, _ := h.Handle(cmd("LLEN", "arr"), c)
 		if rlen.Type != resp.Integer {
 			t.Fatalf("expected integer reply for LLEN, got %#v", rlen)
 		}
@@ -171,12 +204,12 @@ func TestListCommandsAndBLPOP(t *testing.T) {
 		if err != nil || ival != 3 {
 			t.Fatalf("expected length 3, got %#v (err=%v)", rlen, err)
 		}
-		lr, _ := h.Handle(cmd("LRANGE", "arr", "0", "-1"), nil, false)
+		lr, _ := h.Handle(cmd("LRANGE", "arr", "0", "-1"), c)
 		if lr.Type != resp.Array || len(lr.ListRESPData) != 3 {
 			t.Fatalf("expected 3 elements, got %#v", lr)
 		}
 		// LPOP single
-		lp, _ := h.Handle(cmd("LPOP", "arr"), nil, false)
+		lp, _ := h.Handle(cmd("LPOP", "arr"), c)
 		if lp.Type != resp.BulkString || string(lp.Data) != "a" {
 			t.Fatalf("expected 'a', got %#v", lp)
 		}
@@ -184,16 +217,22 @@ func TestListCommandsAndBLPOP(t *testing.T) {
 
 	t.Run("blpop blocks then returns", func(t *testing.T) {
 		h := setupTestHandler()
+		blpopClient := createTestClient()
+		defer blpopClient.CloseConn()
+
 		// Start BLPOP with blocking timeout >0 in goroutine
 		resCh := make(chan *resp.RESPData, 1)
 		go func() {
-			r, _ := h.Handle(cmd("BLPOP", "bq", "5"), nil, false)
+			r, _ := h.Handle(cmd("BLPOP", "bq", "5"), blpopClient)
 			resCh <- r
 		}()
 		// Give the BLPOP a moment to register
 		time.Sleep(50 * time.Millisecond)
-		// Push an item
-		if _, err := h.Handle(cmd("RPUSH", "bq", "X"), nil, false); err != nil {
+
+		// Push an item with a different client
+		pushClient := createTestClient()
+		defer pushClient.CloseConn()
+		if _, err := h.Handle(cmd("RPUSH", "bq", "X"), pushClient); err != nil {
 			t.Fatalf("RPUSH error: %v", err)
 		}
 		select {
@@ -213,12 +252,11 @@ func TestListCommandsAndBLPOP(t *testing.T) {
 // Pub/Sub subscribe and publish
 func TestPubSubSubscribePublish(t *testing.T) {
 	h := setupTestHandler()
-	c1, c2 := net.Pipe()
-	defer c1.Close()
-	defer c2.Close()
+	c := createTestClient()
+	defer c.CloseConn()
 
-	// Subscribe using c1
-	subResp, err := h.HandleSUBSCRIBE([]*resp.RESPData{resp.ConvertBulkStringToRESP("SUBSCRIBE"), resp.ConvertBulkStringToRESP("chan")}, c1)
+	// Subscribe using client
+	subResp, err := h.HandleSUBSCRIBE([]*resp.RESPData{resp.ConvertBulkStringToRESP("SUBSCRIBE"), resp.ConvertBulkStringToRESP("chan")}, c)
 	if err != nil {
 		t.Fatalf("subscribe error: %v", err)
 	}
@@ -239,40 +277,38 @@ func TestPubSubSubscribePublish(t *testing.T) {
 		t.Fatalf("expected publish count 1, got %#v (err=%v)", pubResp, perr)
 	}
 
-	// Retrieve receiver channel from DB and ensure message arrived
-	recv, ok := h.db.GetReceiver(c1)
-	if !ok {
-		t.Fatalf("expected receiver channel for conn")
-	}
+	// Verify message arrives on client's PubSubChan
 	select {
-	case msg := <-recv:
+	case msg := <-c.PubSubChan:
 		if msg != "hello" {
 			t.Fatalf("expected message 'hello', got %q", msg)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("timeout waiting for published message")
 	}
-
-	_ = c2 // silence unused in some builds
 }
 
 // Transactions: MULTI, QUEUED, EXEC and DISCARD
 func TestTransactions(t *testing.T) {
 	t.Run("multi exec executes queued commands", func(t *testing.T) {
 		h := setupTestHandler()
-		c1, _ := net.Pipe()
-		defer c1.Close()
+		c := createTestClient()
+		defer c.CloseConn()
 
 		// MULTI
-		if _, err := h.Handle(cmd("MULTI"), c1, false); err != nil {
+		if _, err := h.Handle(cmd("MULTI"), c); err != nil {
 			t.Fatalf("MULTI error: %v", err)
 		}
-		// QUEUE a set by calling Handle with inTransaction=true
-		if _, err := h.Handle(cmd("SET", "txk", "1"), c1, true); err != nil {
+		// QUEUE a set - Handle will queue since client is in transaction mode
+		queueResp, err := h.Handle(cmd("SET", "txk", "1"), c)
+		if err != nil {
 			t.Fatalf("queue SET error: %v", err)
 		}
+		if queueResp.Type != resp.SimpleString || string(queueResp.Data) != "QUEUED" {
+			t.Fatalf("expected QUEUED response, got %#v", queueResp)
+		}
 		// EXEC
-		res, err := h.Handle(cmd("EXEC"), c1, false)
+		res, err := h.Handle(cmd("EXEC"), c)
 		if err != nil {
 			t.Fatalf("EXEC error: %v", err)
 		}
@@ -280,7 +316,7 @@ func TestTransactions(t *testing.T) {
 			t.Fatalf("expected array of results, got %#v", res)
 		}
 		// Ensure key set
-		r, _ := h.Handle(cmd("GET", "txk"), nil, false)
+		r, _ := h.Handle(cmd("GET", "txk"), c)
 		if string(r.Data) != "1" {
 			t.Fatalf("expected txk=1, got %q", string(r.Data))
 		}
@@ -288,19 +324,20 @@ func TestTransactions(t *testing.T) {
 
 	t.Run("multi discard does not execute", func(t *testing.T) {
 		h := setupTestHandler()
-		c1, _ := net.Pipe()
-		defer c1.Close()
+		c := createTestClient()
+		defer c.CloseConn()
 
-		if _, err := h.Handle(cmd("MULTI"), c1, false); err != nil {
+		if _, err := h.Handle(cmd("MULTI"), c); err != nil {
 			t.Fatalf("MULTI error: %v", err)
 		}
-		if _, err := h.Handle(cmd("SET", "txk2", "1"), c1, true); err != nil {
+		// Queue a command
+		if _, err := h.Handle(cmd("SET", "txk2", "1"), c); err != nil {
 			t.Fatalf("queue SET error: %v", err)
 		}
-		if _, err := h.Handle(cmd("DISCARD"), c1, false); err != nil {
+		if _, err := h.Handle(cmd("DISCARD"), c); err != nil {
 			t.Fatalf("DISCARD error: %v", err)
 		}
-		r, _ := h.Handle(cmd("GET", "txk2"), nil, false)
+		r, _ := h.Handle(cmd("GET", "txk2"), c)
 		// Expect nil bulk
 		if r.Type != resp.BulkString || len(r.Data) != 0 {
 			t.Fatalf("expected no key after DISCARD, got %#v", r)
@@ -312,8 +349,11 @@ func TestTransactions(t *testing.T) {
 func TestStreamsXADD_XREAD(t *testing.T) {
 	t.Run("xadd and xrange basic", func(t *testing.T) {
 		h := setupTestHandler()
+		c := createTestClient()
+		defer c.CloseConn()
+
 		// XADD s1 * f v
-		res, err := h.Handle(cmd("XADD", "s1", "*", "f", "v"), nil, false)
+		res, err := h.Handle(cmd("XADD", "s1", "*", "f", "v"), c)
 		if err != nil {
 			t.Fatalf("XADD error: %v", err)
 		}
@@ -322,7 +362,7 @@ func TestStreamsXADD_XREAD(t *testing.T) {
 		}
 		id := string(res.Data)
 		// Use explicit id bounds to avoid edge-case handling paths.
-		xr, err := h.Handle(cmd("XRANGE", "s1", id, id), nil, false)
+		xr, err := h.Handle(cmd("XRANGE", "s1", id, id), c)
 		if err != nil {
 			t.Fatalf("XRANGE error: %v", err)
 		}
@@ -333,16 +373,22 @@ func TestStreamsXADD_XREAD(t *testing.T) {
 
 	t.Run("xread blocking wakes on xadd", func(t *testing.T) {
 		h := setupTestHandler()
+		xreadClient := createTestClient()
+		defer xreadClient.CloseConn()
+
 		// Start XREAD BLOCK 500 STREAMS s2 0-0 in goroutine
 		outCh := make(chan *resp.RESPData, 1)
 		go func() {
-			r, _ := h.Handle(cmd("XREAD", "BLOCK", "500", "STREAMS", "s2", "0-0"), nil, false)
+			r, _ := h.Handle(cmd("XREAD", "BLOCK", "500", "STREAMS", "s2", "0-0"), xreadClient)
 			outCh <- r
 		}()
 		// Give the XREAD a moment to register
 		time.Sleep(50 * time.Millisecond)
+
 		// Now XADD should wake it
-		if _, err := h.Handle(cmd("XADD", "s2", "*", "k", "v"), nil, false); err != nil {
+		addClient := createTestClient()
+		defer addClient.CloseConn()
+		if _, err := h.Handle(cmd("XADD", "s2", "*", "k", "v"), addClient); err != nil {
 			t.Fatalf("XADD error: %v", err)
 		}
 		select {
@@ -360,46 +406,49 @@ func TestStreamsXADD_XREAD(t *testing.T) {
 func TestHandleTYPE(t *testing.T) {
 	cases := []struct {
 		name     string
-		setup    func(*CommandHandler)
+		setup    func(*CommandHandler, *client.Client)
 		key      string
 		wantType string
 	}{
 		{
 			name:     "string type",
-			setup:    func(h *CommandHandler) { h.Handle(cmd("SET", "k", "v"), nil, false) },
+			setup:    func(h *CommandHandler, c *client.Client) { h.Handle(cmd("SET", "k", "v"), c) },
 			key:      "k",
 			wantType: "string",
 		},
 		{
 			name:     "list type",
-			setup:    func(h *CommandHandler) { h.Handle(cmd("RPUSH", "L", "a"), nil, false) },
+			setup:    func(h *CommandHandler, c *client.Client) { h.Handle(cmd("RPUSH", "L", "a"), c) },
 			key:      "L",
 			wantType: "list",
 		},
 		{
 			name:     "stream type",
-			setup:    func(h *CommandHandler) { h.Handle(cmd("XADD", "s", "*", "f", "v"), nil, false) },
+			setup:    func(h *CommandHandler, c *client.Client) { h.Handle(cmd("XADD", "s", "*", "f", "v"), c) },
 			key:      "s",
 			wantType: "stream",
 		},
 		{
 			name:     "none for missing key",
-			setup:    func(h *CommandHandler) {},
+			setup:    func(h *CommandHandler, c *client.Client) {},
 			key:      "missing",
 			wantType: "none",
 		},
 	}
 
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			h := setupTestHandler()
-			c.setup(h)
-			r, err := h.Handle(cmd("TYPE", c.key), nil, false)
+			c := createTestClient()
+			defer c.CloseConn()
+
+			tc.setup(h, c)
+			r, err := h.Handle(cmd("TYPE", tc.key), c)
 			if err != nil {
 				t.Fatalf("TYPE error: %v", err)
 			}
-			if r.Type != resp.SimpleString || string(r.Data) != c.wantType {
-				t.Fatalf("expected type %q, got %#v", c.wantType, r)
+			if r.Type != resp.SimpleString || string(r.Data) != tc.wantType {
+				t.Fatalf("expected type %q, got %#v", tc.wantType, r)
 			}
 		})
 	}
@@ -409,17 +458,20 @@ func TestHandleTYPE(t *testing.T) {
 func TestHandleSET_PX(t *testing.T) {
 	t.Run("PX expiry works", func(t *testing.T) {
 		h := setupTestHandler()
-		if _, err := h.Handle(cmd("SET", "k3", "v3", "PX", "500"), nil, false); err != nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		if _, err := h.Handle(cmd("SET", "k3", "v3", "PX", "500"), c); err != nil {
 			t.Fatalf("SET PX error: %v", err)
 		}
 		// Immediately present
-		r, _ := h.Handle(cmd("GET", "k3"), nil, false)
+		r, _ := h.Handle(cmd("GET", "k3"), c)
 		if r.Type != resp.BulkString || string(r.Data) != "v3" {
 			t.Fatalf("expected v3 present, got %#v", r)
 		}
 		// wait >500ms and ensure gone
 		time.Sleep(600 * time.Millisecond)
-		r2, _ := h.Handle(cmd("GET", "k3"), nil, false)
+		r2, _ := h.Handle(cmd("GET", "k3"), c)
 		if r2.Type != resp.BulkString || len(r2.Data) != 0 {
 			t.Fatalf("expected nil bulk after expiry, got %#v", r2)
 		}
@@ -427,14 +479,20 @@ func TestHandleSET_PX(t *testing.T) {
 
 	t.Run("SET with invalid expiry option", func(t *testing.T) {
 		h := setupTestHandler()
-		if _, err := h.Handle(cmd("SET", "k", "v", "INVALID", "100"), nil, false); err == nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		if _, err := h.Handle(cmd("SET", "k", "v", "INVALID", "100"), c); err == nil {
 			t.Fatalf("expected error for invalid expiry option")
 		}
 	})
 
 	t.Run("SET with negative duration", func(t *testing.T) {
 		h := setupTestHandler()
-		if _, err := h.Handle(cmd("SET", "k", "v", "EX", "-1"), nil, false); err == nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		if _, err := h.Handle(cmd("SET", "k", "v", "EX", "-1"), c); err == nil {
 			t.Fatalf("expected error for negative duration")
 		}
 	})
@@ -444,7 +502,10 @@ func TestHandleSET_PX(t *testing.T) {
 func TestHandleLPUSH(t *testing.T) {
 	t.Run("lpush creates list and prepends", func(t *testing.T) {
 		h := setupTestHandler()
-		r, err := h.Handle(cmd("LPUSH", "L", "a", "b", "c"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		r, err := h.Handle(cmd("LPUSH", "L", "a", "b", "c"), c)
 		if err != nil {
 			t.Fatalf("LPUSH error: %v", err)
 		}
@@ -457,7 +518,7 @@ func TestHandleLPUSH(t *testing.T) {
 			t.Fatalf("expected length 3, got %d", ival)
 		}
 		// Order should be c, b, a (prepended in order)
-		lr, _ := h.Handle(cmd("LRANGE", "L", "0", "-1"), nil, false)
+		lr, _ := h.Handle(cmd("LRANGE", "L", "0", "-1"), c)
 		if len(lr.ListRESPData) != 3 {
 			t.Fatalf("expected 3 elements")
 		}
@@ -468,8 +529,11 @@ func TestHandleLPUSH(t *testing.T) {
 
 	t.Run("lpush wrong type error", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("SET", "str", "val"), nil, false)
-		if _, err := h.Handle(cmd("LPUSH", "str", "x"), nil, false); err == nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		h.Handle(cmd("SET", "str", "val"), c)
+		if _, err := h.Handle(cmd("LPUSH", "str", "x"), c); err == nil {
 			t.Fatalf("expected error when lpush on string key")
 		}
 	})
@@ -479,8 +543,11 @@ func TestHandleLPUSH(t *testing.T) {
 func TestHandleLPOP_WithCount(t *testing.T) {
 	t.Run("lpop with count", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("RPUSH", "L", "a", "b", "c", "d"), nil, false)
-		r, err := h.Handle(cmd("LPOP", "L", "2"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		h.Handle(cmd("RPUSH", "L", "a", "b", "c", "d"), c)
+		r, err := h.Handle(cmd("LPOP", "L", "2"), c)
 		if err != nil {
 			t.Fatalf("LPOP error: %v", err)
 		}
@@ -491,7 +558,7 @@ func TestHandleLPOP_WithCount(t *testing.T) {
 			t.Fatalf("unexpected popped values: %#v", r)
 		}
 		// Should have 2 remaining
-		lr, _ := h.Handle(cmd("LRANGE", "L", "0", "-1"), nil, false)
+		lr, _ := h.Handle(cmd("LRANGE", "L", "0", "-1"), c)
 		if len(lr.ListRESPData) != 2 {
 			t.Fatalf("expected 2 remaining elements")
 		}
@@ -499,8 +566,11 @@ func TestHandleLPOP_WithCount(t *testing.T) {
 
 	t.Run("lpop count exceeds length", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("RPUSH", "L", "a", "b"), nil, false)
-		r, err := h.Handle(cmd("LPOP", "L", "5"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		h.Handle(cmd("RPUSH", "L", "a", "b"), c)
+		r, err := h.Handle(cmd("LPOP", "L", "5"), c)
 		if err != nil {
 			t.Fatalf("LPOP error: %v", err)
 		}
@@ -512,7 +582,10 @@ func TestHandleLPOP_WithCount(t *testing.T) {
 
 	t.Run("lpop on missing key", func(t *testing.T) {
 		h := setupTestHandler()
-		r, err := h.Handle(cmd("LPOP", "missing"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		r, err := h.Handle(cmd("LPOP", "missing"), c)
 		if err != nil {
 			t.Fatalf("LPOP error: %v", err)
 		}
@@ -526,8 +599,11 @@ func TestHandleLPOP_WithCount(t *testing.T) {
 func TestHandleLRANGE_EdgeCases(t *testing.T) {
 	t.Run("lrange negative indices", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("RPUSH", "L", "a", "b", "c", "d"), nil, false)
-		r, err := h.Handle(cmd("LRANGE", "L", "-2", "-1"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		h.Handle(cmd("RPUSH", "L", "a", "b", "c", "d"), c)
+		r, err := h.Handle(cmd("LRANGE", "L", "-2", "-1"), c)
 		if err != nil {
 			t.Fatalf("LRANGE error: %v", err)
 		}
@@ -541,8 +617,11 @@ func TestHandleLRANGE_EdgeCases(t *testing.T) {
 
 	t.Run("lrange start > stop", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("RPUSH", "L", "a", "b", "c"), nil, false)
-		r, err := h.Handle(cmd("LRANGE", "L", "2", "1"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		h.Handle(cmd("RPUSH", "L", "a", "b", "c"), c)
+		r, err := h.Handle(cmd("LRANGE", "L", "2", "1"), c)
 		if err != nil {
 			t.Fatalf("LRANGE error: %v", err)
 		}
@@ -553,7 +632,10 @@ func TestHandleLRANGE_EdgeCases(t *testing.T) {
 
 	t.Run("lrange on missing key", func(t *testing.T) {
 		h := setupTestHandler()
-		r, err := h.Handle(cmd("LRANGE", "missing", "0", "-1"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		r, err := h.Handle(cmd("LRANGE", "missing", "0", "-1"), c)
 		if err != nil {
 			t.Fatalf("LRANGE error: %v", err)
 		}
@@ -567,8 +649,11 @@ func TestHandleLRANGE_EdgeCases(t *testing.T) {
 func TestHandleBLPOP_Timeout(t *testing.T) {
 	t.Run("blpop timeout returns nil", func(t *testing.T) {
 		h := setupTestHandler()
+		c := createTestClient()
+		defer c.CloseConn()
+
 		start := time.Now()
-		r, err := h.Handle(cmd("BLPOP", "empty", "0.2"), nil, false)
+		r, err := h.Handle(cmd("BLPOP", "empty", "0.2"), c)
 		elapsed := time.Since(start)
 		if err != nil {
 			t.Fatalf("BLPOP error: %v", err)
@@ -583,7 +668,10 @@ func TestHandleBLPOP_Timeout(t *testing.T) {
 
 	t.Run("blpop negative duration error", func(t *testing.T) {
 		h := setupTestHandler()
-		if _, err := h.Handle(cmd("BLPOP", "key", "-1"), nil, false); err == nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		if _, err := h.Handle(cmd("BLPOP", "key", "-1"), c); err == nil {
 			t.Fatalf("expected error for negative duration")
 		}
 	})
@@ -593,14 +681,20 @@ func TestHandleBLPOP_Timeout(t *testing.T) {
 func TestHandleXADD_EdgeCases(t *testing.T) {
 	t.Run("xadd rejects 0-0", func(t *testing.T) {
 		h := setupTestHandler()
-		if _, err := h.Handle(cmd("XADD", "s", "0-0", "f", "v"), nil, false); err == nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		if _, err := h.Handle(cmd("XADD", "s", "0-0", "f", "v"), c); err == nil {
 			t.Fatalf("expected error for ID 0-0")
 		}
 	})
 
 	t.Run("xadd handles 0-* when stream is empty", func(t *testing.T) {
 		h := setupTestHandler()
-		r, err := h.Handle(cmd("XADD", "s", "0-*", "f", "v"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		r, err := h.Handle(cmd("XADD", "s", "0-*", "f", "v"), c)
 		if err != nil {
 			t.Fatalf("XADD error: %v", err)
 		}
@@ -611,13 +705,16 @@ func TestHandleXADD_EdgeCases(t *testing.T) {
 
 	t.Run("xadd auto-generates sequence number", func(t *testing.T) {
 		h := setupTestHandler()
+		c := createTestClient()
+		defer c.CloseConn()
+
 		// Add first entry
-		r1, _ := h.Handle(cmd("XADD", "s", "100-*", "f", "v"), nil, false)
+		r1, _ := h.Handle(cmd("XADD", "s", "100-*", "f", "v"), c)
 		if string(r1.Data) != "100-0" {
 			t.Fatalf("expected ID 100-0, got %q", string(r1.Data))
 		}
 		// Add second entry with same millis
-		r2, _ := h.Handle(cmd("XADD", "s", "100-*", "f", "v2"), nil, false)
+		r2, _ := h.Handle(cmd("XADD", "s", "100-*", "f", "v2"), c)
 		if string(r2.Data) != "100-1" {
 			t.Fatalf("expected ID 100-1, got %q", string(r2.Data))
 		}
@@ -625,23 +722,32 @@ func TestHandleXADD_EdgeCases(t *testing.T) {
 
 	t.Run("xadd rejects smaller ID", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("XADD", "s", "100-1", "f", "v"), nil, false)
-		if _, err := h.Handle(cmd("XADD", "s", "100-0", "f", "v2"), nil, false); err == nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		h.Handle(cmd("XADD", "s", "100-1", "f", "v"), c)
+		if _, err := h.Handle(cmd("XADD", "s", "100-0", "f", "v2"), c); err == nil {
 			t.Fatalf("expected error for smaller ID")
 		}
 	})
 
 	t.Run("xadd wrong type error", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("SET", "str", "val"), nil, false)
-		if _, err := h.Handle(cmd("XADD", "str", "*", "f", "v"), nil, false); err == nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		h.Handle(cmd("SET", "str", "val"), c)
+		if _, err := h.Handle(cmd("XADD", "str", "*", "f", "v"), c); err == nil {
 			t.Fatalf("expected error when xadd on string key")
 		}
 	})
 
 	t.Run("xadd invalid ID format", func(t *testing.T) {
 		h := setupTestHandler()
-		if _, err := h.Handle(cmd("XADD", "s", "invalid", "f", "v"), nil, false); err == nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		if _, err := h.Handle(cmd("XADD", "s", "invalid", "f", "v"), c); err == nil {
 			t.Fatalf("expected error for invalid ID format")
 		}
 	})
@@ -651,9 +757,12 @@ func TestHandleXADD_EdgeCases(t *testing.T) {
 func TestHandleXRANGE_EdgeCases(t *testing.T) {
 	t.Run("xrange with - and + symbols", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("XADD", "s", "100-0", "f", "v1"), nil, false)
-		h.Handle(cmd("XADD", "s", "200-0", "f", "v2"), nil, false)
-		r, err := h.Handle(cmd("XRANGE", "s", "-", "+"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		h.Handle(cmd("XADD", "s", "100-0", "f", "v1"), c)
+		h.Handle(cmd("XADD", "s", "200-0", "f", "v2"), c)
+		r, err := h.Handle(cmd("XRANGE", "s", "-", "+"), c)
 		if err != nil {
 			t.Fatalf("XRANGE error: %v", err)
 		}
@@ -664,11 +773,14 @@ func TestHandleXRANGE_EdgeCases(t *testing.T) {
 
 	t.Run("xrange partial ID format", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("XADD", "s", "100-0", "f", "v1"), nil, false)
-		h.Handle(cmd("XADD", "s", "100-1", "f", "v2"), nil, false)
-		h.Handle(cmd("XADD", "s", "200-0", "f", "v3"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		h.Handle(cmd("XADD", "s", "100-0", "f", "v1"), c)
+		h.Handle(cmd("XADD", "s", "100-1", "f", "v2"), c)
+		h.Handle(cmd("XADD", "s", "200-0", "f", "v3"), c)
 		// Use partial ID (millis only)
-		r, err := h.Handle(cmd("XRANGE", "s", "100", "100"), nil, false)
+		r, err := h.Handle(cmd("XRANGE", "s", "100", "100"), c)
 		if err != nil {
 			t.Fatalf("XRANGE error: %v", err)
 		}
@@ -680,8 +792,11 @@ func TestHandleXRANGE_EdgeCases(t *testing.T) {
 
 	t.Run("xrange start > end returns empty", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("XADD", "s", "100-0", "f", "v"), nil, false)
-		r, err := h.Handle(cmd("XRANGE", "s", "200-0", "100-0"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		h.Handle(cmd("XADD", "s", "100-0", "f", "v"), c)
+		r, err := h.Handle(cmd("XRANGE", "s", "200-0", "100-0"), c)
 		if err != nil {
 			t.Fatalf("XRANGE error: %v", err)
 		}
@@ -692,7 +807,10 @@ func TestHandleXRANGE_EdgeCases(t *testing.T) {
 
 	t.Run("xrange on missing stream", func(t *testing.T) {
 		h := setupTestHandler()
-		if _, err := h.Handle(cmd("XRANGE", "missing", "0-0", "1-0"), nil, false); err == nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		if _, err := h.Handle(cmd("XRANGE", "missing", "0-0", "1-0"), c); err == nil {
 			t.Fatalf("expected error for missing stream")
 		}
 	})
@@ -702,19 +820,26 @@ func TestHandleXRANGE_EdgeCases(t *testing.T) {
 func TestHandleXREAD_EdgeCases(t *testing.T) {
 	t.Run("xread with $ in blocking mode", func(t *testing.T) {
 		h := setupTestHandler()
-		// Create stream with existing entry
-		h.Handle(cmd("XADD", "s", "100-0", "f", "old"), nil, false)
+		xreadClient := createTestClient()
+		defer xreadClient.CloseConn()
+
+		// Create stream with existing entry using separate client
+		setupClient := createTestClient()
+		defer setupClient.CloseConn()
+		h.Handle(cmd("XADD", "s", "100-0", "f", "old"), setupClient)
 
 		// Start XREAD with $ (only new entries)
 		outCh := make(chan *resp.RESPData, 1)
 		go func() {
-			r, _ := h.Handle(cmd("XREAD", "BLOCK", "500", "STREAMS", "s", "$"), nil, false)
+			r, _ := h.Handle(cmd("XREAD", "BLOCK", "500", "STREAMS", "s", "$"), xreadClient)
 			outCh <- r
 		}()
 		time.Sleep(50 * time.Millisecond)
 
 		// Add new entry
-		h.Handle(cmd("XADD", "s", "200-0", "f", "new"), nil, false)
+		addClient := createTestClient()
+		defer addClient.CloseConn()
+		h.Handle(cmd("XADD", "s", "200-0", "f", "new"), addClient)
 
 		select {
 		case r := <-outCh:
@@ -728,17 +853,23 @@ func TestHandleXREAD_EdgeCases(t *testing.T) {
 
 	t.Run("xread $ in non-blocking mode errors", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("XADD", "s", "100-0", "f", "v"), nil, false)
-		if _, err := h.Handle(cmd("XREAD", "STREAMS", "s", "$"), nil, false); err == nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		h.Handle(cmd("XADD", "s", "100-0", "f", "v"), c)
+		if _, err := h.Handle(cmd("XREAD", "STREAMS", "s", "$"), c); err == nil {
 			t.Fatalf("expected error for $ in non-blocking mode")
 		}
 	})
 
 	t.Run("xread timeout returns nil", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("XADD", "s", "100-0", "f", "v"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		h.Handle(cmd("XADD", "s", "100-0", "f", "v"), c)
 		start := time.Now()
-		r, err := h.Handle(cmd("XREAD", "BLOCK", "200", "STREAMS", "s", "100-0"), nil, false)
+		r, err := h.Handle(cmd("XREAD", "BLOCK", "200", "STREAMS", "s", "100-0"), c)
 		elapsed := time.Since(start)
 		if err != nil {
 			t.Fatalf("XREAD error: %v", err)
@@ -753,11 +884,14 @@ func TestHandleXREAD_EdgeCases(t *testing.T) {
 
 	t.Run("xread multiple streams", func(t *testing.T) {
 		h := setupTestHandler()
-		h.Handle(cmd("XADD", "s1", "100-0", "f", "v1"), nil, false)
-		h.Handle(cmd("XADD", "s2", "200-0", "f", "v2"), nil, false)
-		h.Handle(cmd("XADD", "s1", "150-0", "f", "v3"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
 
-		r, err := h.Handle(cmd("XREAD", "STREAMS", "s1", "s2", "100-0", "100-0"), nil, false)
+		h.Handle(cmd("XADD", "s1", "100-0", "f", "v1"), c)
+		h.Handle(cmd("XADD", "s2", "200-0", "f", "v2"), c)
+		h.Handle(cmd("XADD", "s1", "150-0", "f", "v3"), c)
+
+		r, err := h.Handle(cmd("XREAD", "STREAMS", "s1", "s2", "100-0", "100-0"), c)
 		if err != nil {
 			t.Fatalf("XREAD error: %v", err)
 		}
@@ -771,15 +905,14 @@ func TestHandleXREAD_EdgeCases(t *testing.T) {
 func TestHandleUNSUBSCRIBE(t *testing.T) {
 	t.Run("unsubscribe removes subscription", func(t *testing.T) {
 		h := setupTestHandler()
-		c1, c2 := net.Pipe()
-		defer c1.Close()
-		defer c2.Close()
+		c := createTestClient()
+		defer c.CloseConn()
 
 		// Subscribe
-		h.HandleSUBSCRIBE([]*resp.RESPData{resp.ConvertBulkStringToRESP("SUBSCRIBE"), resp.ConvertBulkStringToRESP("chan")}, c1)
+		h.HandleSUBSCRIBE([]*resp.RESPData{resp.ConvertBulkStringToRESP("SUBSCRIBE"), resp.ConvertBulkStringToRESP("chan")}, c)
 
 		// Unsubscribe
-		r, err := h.HandleUNSUBSCRIBE([]*resp.RESPData{resp.ConvertBulkStringToRESP("UNSUBSCRIBE"), resp.ConvertBulkStringToRESP("chan")}, c1)
+		r, err := h.HandleUNSUBSCRIBE([]*resp.RESPData{resp.ConvertBulkStringToRESP("UNSUBSCRIBE"), resp.ConvertBulkStringToRESP("chan")}, c)
 		if err != nil {
 			t.Fatalf("UNSUBSCRIBE error: %v", err)
 		}
@@ -803,7 +936,10 @@ func TestHandleUNSUBSCRIBE(t *testing.T) {
 func TestHandleCOMMANDDOCS(t *testing.T) {
 	t.Run("command docs returns empty array", func(t *testing.T) {
 		h := setupTestHandler()
-		r, err := h.Handle(cmd("COMMAND", "DOCS"), nil, false)
+		c := createTestClient()
+		defer c.CloseConn()
+
+		r, err := h.Handle(cmd("COMMAND", "DOCS"), c)
 		if err != nil {
 			t.Fatalf("COMMAND DOCS error: %v", err)
 		}
@@ -814,7 +950,10 @@ func TestHandleCOMMANDDOCS(t *testing.T) {
 
 	t.Run("command with wrong subcommand errors", func(t *testing.T) {
 		h := setupTestHandler()
-		if _, err := h.Handle(cmd("COMMAND", "INVALID"), nil, false); err == nil {
+		c := createTestClient()
+		defer c.CloseConn()
+
+		if _, err := h.Handle(cmd("COMMAND", "INVALID"), c); err == nil {
 			t.Fatalf("expected error for invalid subcommand")
 		}
 	})
@@ -823,21 +962,26 @@ func TestHandleCOMMANDDOCS(t *testing.T) {
 // Test unknown command
 func TestHandleUnknownCommand(t *testing.T) {
 	h := setupTestHandler()
-	if _, err := h.Handle(cmd("UNKNOWN"), nil, false); err == nil {
+	c := createTestClient()
+	defer c.CloseConn()
+
+	if _, err := h.Handle(cmd("UNKNOWN"), c); err == nil {
 		t.Fatalf("expected error for unknown command")
 	}
 }
 
-// Test HandleSubscribeMode
-func TestHandleSubscribeMode(t *testing.T) {
+// Test subscribe mode behavior
+func TestSubscribeModeCommands(t *testing.T) {
 	t.Run("subscribe mode allows limited commands", func(t *testing.T) {
 		h := setupTestHandler()
-		c1, c2 := net.Pipe()
-		defer c1.Close()
-		defer c2.Close()
+		c := createTestClient()
+		defer c.CloseConn()
 
-		// PING should work in subscribe mode
-		r, err := h.HandleSubscribeMode(cmd("PING"), c1)
+		// Put client in subscribe mode
+		h.HandleSUBSCRIBE([]*resp.RESPData{resp.ConvertBulkStringToRESP("SUBSCRIBE"), resp.ConvertBulkStringToRESP("chan")}, c)
+
+		// PING should work in subscribe mode (returns array format)
+		r, err := h.Handle(cmd("PING"), c)
 		if err != nil {
 			t.Fatalf("PING in subscribe mode error: %v", err)
 		}
@@ -848,10 +992,13 @@ func TestHandleSubscribeMode(t *testing.T) {
 
 	t.Run("subscribe mode blocks other commands", func(t *testing.T) {
 		h := setupTestHandler()
-		c1, _ := net.Pipe()
-		defer c1.Close()
+		c := createTestClient()
+		defer c.CloseConn()
 
-		if _, err := h.HandleSubscribeMode(cmd("SET", "k", "v"), c1); err == nil {
+		// Put client in subscribe mode
+		h.HandleSUBSCRIBE([]*resp.RESPData{resp.ConvertBulkStringToRESP("SUBSCRIBE"), resp.ConvertBulkStringToRESP("chan")}, c)
+
+		if _, err := h.Handle(cmd("SET", "k", "v"), c); err == nil {
 			t.Fatalf("expected error for SET in subscribe mode")
 		}
 	})

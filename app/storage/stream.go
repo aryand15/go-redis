@@ -92,7 +92,9 @@ func (st *Stream) NextStreamID() string {
 		seqNum = prevSeqNum + 1
 	}
 
-	return fmt.Sprintf("%d-%d", currMillis, seqNum)
+	nextId := fmt.Sprintf("%d-%d", currMillis, seqNum)
+
+	return nextId
 }
 
 // AddEntry adds a new valid StreamEntry entry to Stream st.
@@ -109,6 +111,17 @@ func (st *Stream) EntryAt(idx int) *StreamEntry {
 // StreamData returns the stream data of Stream st as a list of StreamEntry instances.
 func (st *Stream) StreamData() []*StreamEntry {
 	return st.stream
+}
+
+// Slice returns a Stream containing all entries that are located at and after the start index. 
+func (st *Stream) Slice(start int) ([]*StreamEntry, error) {
+	if start < 0 || start >= st.Length() {
+		return nil, fmt.Errorf("cannot take slice of stream with length %d starting at index %d", st.Length(), start)
+	}
+	sliceLen := st.Length()-start
+	slicedStreamData := make([]*StreamEntry, sliceLen)
+	copy(slicedStreamData, st.stream[start:])
+	return slicedStreamData, nil
 }
 
 // CleanedNextStreamID takes a stream id, cleans it (replaces asterisks with real integers) and determines 
